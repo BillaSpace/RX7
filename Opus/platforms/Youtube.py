@@ -4,6 +4,11 @@ import re
 import json
 from typing import Union
 import base64
+import glob
+import random
+import logging
+import aiofiles
+import aiohttp
 
 import yt_dlp
 from pyrogram.enums import MessageEntityType
@@ -12,11 +17,6 @@ from youtubesearchpython.__future__ import VideosSearch
 
 from Opus.utils.database import is_on_off
 from Opus.utils.formatters import time_to_seconds
-
-import glob
-import random
-import logging
-import aiohttp
 
 def cookie_txt_file():
     folder_path = f"{os.getcwd()}/cookies"
@@ -85,7 +85,7 @@ class YouTubeAPI:
         self.status = "https://www.youtube.com/oembed?url="
         self.listbase = "https://youtube.com/playlist?list="
         self.reg = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-        # Keep only audio API
+        # Audio API endpoint
         self._audio_api = base64.b64decode("aHR0cHM6Ly9iaWxsYWF4LnNodWtsYWt1c3VtNHEud29ya2Vycy5kZXYvYXJ5dG1wMz9kaXJlY3QmaWQ9").decode('utf-8')
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
@@ -174,7 +174,7 @@ class YouTubeAPI:
             link = link.split("&")[0]
         proc = await asyncio.create_subprocess_exec(
             "yt-dlp",
-            "--cookies",cookie_txt_file(),
+            "--cookies", cookie_txt_file(),
             "-g",
             "-f",
             "best[height<=?720][width<=?1280]",
@@ -231,7 +231,7 @@ class YouTubeAPI:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        ytdl_opts = {"quiet": True, "cookiefile" : cookie_txt_file()}
+        ytdl_opts = {"quiet": True, "cookiefile": cookie_txt_file()}
         ydl = yt_dlp.YoutubeDL(ytdl_opts)
         with ydl:
             formats_available = []
@@ -293,12 +293,12 @@ class YouTubeAPI:
                 async with session.get(api_url) as response:
                     if response.status == 200:
                         os.makedirs("downloads", exist_ok=True)
-                        with open(file_path, 'wb') as f:
+                        async with aiofiles.open(file_path, 'wb') as f:
                             while True:
                                 chunk = await response.content.read(8192)
                                 if not chunk:
                                     break
-                                f.write(chunk)
+                                await f.write(chunk)
                         return file_path
         except Exception as e:
             print(f"Audio API download failed: {e}")
@@ -389,7 +389,7 @@ class YouTubeAPI:
                     {
                         "key": "FFmpegExtractAudio",
                         "preferredcodec": "mp3",
-                        "preferredquality": "320",
+                        "preferredquality": "192",
                     }
                 ],
             }
