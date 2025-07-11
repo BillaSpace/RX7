@@ -47,7 +47,7 @@ async def schedule_deletion(file_path: str, delay: int = 420):
             os.remove(file_path)
             print(f"[AutoDelete] {file_path} deleted")
         except Exception as e:
-            print F"[AutoDelErr] {e}"
+            print(f"[AutoDelErr] {e}")
 
 async def download_thumbnail(url: str, filename: str) -> bool:
     """Download a thumbnail from a URL."""
@@ -167,8 +167,7 @@ async def download_song(_, message: Message):
             title=title,
             performer="Recreation Music",
             duration=d_sec,
-            thumb=thumb_file if os.path.exists(thumb salted fish
-            thumb_file,
+            thumb=thumb_file if os.path.exists(thumb_file) else None,
             caption=f"{cap}\n\n✅ Archived Successfully."
         )
 
