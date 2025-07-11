@@ -72,10 +72,10 @@ async def validate_url(url: str) -> bool:
         print(f"[URLValidationErr] {url}: {e}")
         return False
 
-async def download_media_locally(url: str, filename: str) -> bool:
+async def download_media_locally(url: str, filename: str, headers: dict = None) -> bool:
     """Download media locally and save to filename."""
     try:
-        r = requests.get(url, timeout=15, stream=True)
+        r = requests.get(url, timeout=15, stream=True, headers=headers)
         r.raise_for_status()
         with open(filename, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
@@ -171,7 +171,7 @@ async def download_song(_, message: Message):
                 # Check if response is an MP3 by content-type
                 content_type = r.headers.get("content-type", "").lower()
                 if "audio/mpeg" not in content_type and "application/octet-stream" not in content_type:
-                    return await msg.edit("❌ Fallback API did not return an Opus Or MP3 file.")
+                    return await msg.edit("❌ Fallback API did not return an MP3 file.")
 
                 # Save the MP3 content directly
                 audio_path = f"{title}.mp3"
@@ -252,7 +252,7 @@ async def download_instagram(_, message: Message):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-        "Referer": "https://www.google.com/",
+        "Referer": "https://www.instagram.com/",
         "Connection": "keep-alive"
     }
 
@@ -281,65 +281,43 @@ async def download_instagram(_, message: Message):
         if not m_url or not m_type:
             continue
 
-        # Validate URL
-        if not await validate_url(m_url):
-            print(f"[InvalidMediaURL] {m_url} is not accessible")
-            # Try downloading locally as a fallback
-            local_filename = f"media_{time.time()}.{m_type}"
-            if not await download_media_locally(m_url, local_filename, headers=headers):
-                continue
-
-            try:
-                if m_type == "video":
-                    media_msgs.append(await message.reply_video(
-                        local_filename,
-                        caption=f"Instagram {m_type} from {url}"
-                    ))
-                elif m_type == "image":
-                    media_msgs.append(await message.reply_photo(
-                        local_filename,
-                        caption=f"Instagram {m_type} from {url}"
-                    ))
-                # Schedule local file deletion
-                asyncio.create_task(schedule_deletion(local_filename))
-            except WebpageCurlFailed as e:
-                print(f"[WebpageCurlFailed] Local {local_filename}: {e}")
-                continue
-            except Exception as e:
-                print(f"[SendMediaErr] Local {local_filename}: {e}")
-                continue
-            continue
-
         # Try sending direct URL
         try:
             if m_type == "video":
-                media_msgs.append(await message.reply_video(
+                sent_msg = await message.reply_video(
                     m_url,
-                    caption=f"Instagram {m_type} from {url}"
-                ))
+                    caption=f"Instagram {m_type} from {url}",
+                    supports_streaming=True
+                )
+                media_msgs.append(sent_msg)
             elif m_type == "image":
-                media_msgs.append(await message.reply_photo(
+                sent_msg = await message.reply_photo(
                     m_url,
                     caption=f"Instagram {m_type} from {url}"
-                ))
+                )
+                media_msgs.append(sent_msg)
         except WebpageCurlFailed as e:
             print(f"[WebpageCurlFailed] {m_url}: {e}")
             # Fallback to downloading locally
-            local_filename = f"media_{time.time()}.{m_type}"
+            local_filename = f"media_{int(time.time())}.{m_type}"
             if not await download_media_locally(m_url, local_filename, headers=headers):
+                print(f"[LocalDownloadFailed] {m_url}")
                 continue
 
             try:
                 if m_type == "video":
-                    media_msgs.append(await message.reply_video(
+                    sent_msg = await message.reply_video(
                         local_filename,
-                        caption=f"Instagram {m_type} from {url}"
-                    ))
+                        caption=f"Instagram {m_type} from {url}",
+                        supports_streaming=True
+                    )
+                    media_msgs.append(sent_msg)
                 elif m_type == "image":
-                    media_msgs.append(await message.reply_photo(
+                    sent_msg = await message.reply_photo(
                         local_filename,
                         caption=f"Instagram {m_type} from {url}"
-                    ))
+                    )
+                    media_msgs.append(sent_msg)
                 # Schedule local file deletion
                 asyncio.create_task(schedule_deletion(local_filename))
             except Exception as e:
@@ -354,12 +332,13 @@ async def download_instagram(_, message: Message):
 
     await msg.delete()
 
-    # Schedule deletion of user-shared files (only replies, not dump)
+    # Schedule deletion of user-shared files (applies to both group and DMs)
     async def delete_instas():
         await asyncio.sleep(420)
         for m in media_msgs:
             try:
                 await m.delete()
-            except Exception:
-                pass
+                print(f"[AutoDelete] Deleted message {m.id} in chat {m.chat.id}")
+            except Exception as e:
+                print(f"[DeleteMediaErr] Message {m.id}: {e}")
     asyncio.create_task(delete_instas())
