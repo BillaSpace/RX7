@@ -17,6 +17,8 @@ DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 4000))
 
 LOGGER_ID = int(getenv("LOGGER_ID", ""))
 OWNER_ID = int(getenv("OWNER_ID", "6257927828"))
+SONG_DUMP_ID = int(getenv("SONG_DUMP_ID", "-1002374471356")) # Change to your group/channel ID
+
 
 HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")
 HEROKU_API_KEY = getenv("HEROKU_API_KEY")
