@@ -247,12 +247,21 @@ async def download_instagram(_, message: Message):
     url = message.command[1]
     msg = await message.reply("📡 Fetching Instagram media...")
 
+    # Headers to mimic a browser request
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": "https://www.google.com/",
+        "Connection": "keep-alive"
+    }
+
     # Retry logic for Instagram API
     max_retries = 3
     retry_delay = 2
     for attempt in range(max_retries):
         try:
-            r = requests.get(f"https://ar-api-iauy.onrender.com/igsty?url={url}", timeout=15)
+            r = requests.get(f"https://ar-api-iauy.onrender.com/igsty?url={url}", timeout=15, headers=headers)
             r.raise_for_status()
             data = r.json()
             items = data.get("data", [])
@@ -277,7 +286,7 @@ async def download_instagram(_, message: Message):
             print(f"[InvalidMediaURL] {m_url} is not accessible")
             # Try downloading locally as a fallback
             local_filename = f"media_{time.time()}.{m_type}"
-            if not await download_media_locally(m_url, local_filename):
+            if not await download_media_locally(m_url, local_filename, headers=headers):
                 continue
 
             try:
@@ -317,7 +326,7 @@ async def download_instagram(_, message: Message):
             print(f"[WebpageCurlFailed] {m_url}: {e}")
             # Fallback to downloading locally
             local_filename = f"media_{time.time()}.{m_type}"
-            if not await download_media_locally(m_url, local_filename):
+            if not await download_media_locally(m_url, local_filename, headers=headers):
                 continue
 
             try:
