@@ -7,6 +7,7 @@ from youtubesearchpython.__future__ import VideosSearch
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import WebpageCurlFailed
+from urllib.parse import urlparse, parse_qs
 
 from Opus import app
 from config import SONG_DUMP_ID, API_URL2  # Ensure these are defined
@@ -71,6 +72,29 @@ async def validate_url(url: str) -> bool:
         print(f"[URLValidationErr] {url}: {e}")
         return False
 
+async def download_media_locally(url: str, filename: str) -> bool:
+    """Download media locally and save to filename."""
+    try:
+        r = requests.get(url, timeout=15, stream=True)
+        r.raise_for_status()
+        with open(filename, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return True
+    except Exception as e:
+        print(f"[LocalDownloadErr] {url}: {e}")
+        return False
+
+def extract_video_id(url: str) -> str:
+    """Extract YouTube video ID from a URL."""
+    parsed_url = urlparse(url)
+    if parsed_url.hostname in ("youtu.be",):
+        return parsed_url.path[1:]
+    if parsed_url.hostname in ("www.youtube.com", "youtube.com"):
+        query_params = parse_qs(parsed_url.query)
+        return query_params.get("v", [None])[0]
+    return None
+
 @app.on_message(filters.command(["song", "music"]))
 async def download_song(_, message: Message):
     """Handle /song or /music command to download audio from YouTube or fallback API."""
@@ -96,6 +120,7 @@ async def download_song(_, message: Message):
 
         vid = videos[0]
         yt_url = f"https://youtube.com/watch?v={vid['id']}"
+        video_id = vid['id']  # Directly use video ID from search result
         title = vid["title"][:60]
         thumb_url = vid["thumbnails"][0]["url"] if vid.get("thumbnails") else ""
         channel = vid.get("channel", {}).get("name", "Unknown Channel")
@@ -134,18 +159,29 @@ async def download_song(_, message: Message):
             print(f"[YTDLP Fail] {e}")
             await msg.edit("⚠️ YouTube download failed. Trying fallback API...")
 
-            # Fallback to API_URL2 for downloading audio file
+            # Fallback to API_URL2 for downloading MP3 directly using video ID
             try:
-                r = requests.get(f"{API_URL2}?url={yt_url}", timeout=15)
+                if not video_id:
+                    return await msg.edit("❌ Could not extract video ID for fallback API.")
+                
+                # Make request to API_URL2, expecting direct MP3 content
+                r = requests.get(f"{API_URL2}?direct&id={video_id}", timeout=15, stream=True)
                 r.raise_for_status()
-                data = r.json()
-                url2 = data.get("audio_url")
-                if not url2:
-                    return await msg.edit("❌ Fallback API returned no audio.")
 
+                # Check if response is an MP3 by content-type
+                content_type = r.headers.get("content-type", "").lower()
+                if "audio/mpeg" not in content_type and "application/octet-stream" not in content_type:
+                    return await msg.edit("❌ Fallback API did not return an Opus Or MP3 file.")
+
+                # Save the MP3 content directly
                 audio_path = f"{title}.mp3"
                 with open(audio_path, "wb") as f:
-                    f.write(requests.get(url2, timeout=15).content)
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                # Verify the file was written and is not empty
+                if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+                    return await msg.edit("❌ Failed to save MP3 from fallback API.")
             except Exception as e:
                 print(f"[FallbackAPI Fail] {e}")
                 return await msg.edit("❌ Failed to download audio from fallback API.")
@@ -211,60 +247,110 @@ async def download_instagram(_, message: Message):
     url = message.command[1]
     msg = await message.reply("📡 Fetching Instagram media...")
 
-    try:
-        r = requests.get(f"https://ar-api-iauy.onrender.com/igsty?url={url}", timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        items = data.get("data", [])
-        if not items:
-            return await msg.edit("❌ No media found or private post.")
+    # Retry logic for Instagram API
+    max_retries = 3
+    retry_delay = 2
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(f"https://ar-api-iauy.onrender.com/igsty?url={url}", timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("data", [])
+            if not items:
+                return await msg.edit("❌ No media found or private post.")
+            break
+        except Exception as e:
+            print(f"[IG API Err] Attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt + 1 == max_retries:
+                return await msg.edit("❌ Failed to fetch Instagram media after retries.")
+            await asyncio.sleep(retry_delay)
 
-        media_msgs = []
+    media_msgs = []
+    for media in items[0].get("media", []):
+        m_url = media.get("url")
+        m_type = media.get("type")
+        if not m_url or not m_type:
+            continue
 
-        for media in items[0].get("media", []):
-            m_url = media.get("url")
-            m_type = media.get("type")
-            if not m_url or not m_type:
-                continue
-
-            # Validate URL before sending
-            if not await validate_url(m_url):
-                print(f"[InvalidMediaURL] {m_url} is not accessible")
+        # Validate URL
+        if not await validate_url(m_url):
+            print(f"[InvalidMediaURL] {m_url} is not accessible")
+            # Try downloading locally as a fallback
+            local_filename = f"media_{time.time()}.{m_type}"
+            if not await download_media_locally(m_url, local_filename):
                 continue
 
             try:
                 if m_type == "video":
                     media_msgs.append(await message.reply_video(
-                        m_url,
+                        local_filename,
                         caption=f"Instagram {m_type} from {url}"
                     ))
                 elif m_type == "image":
                     media_msgs.append(await message.reply_photo(
-                        m_url,
+                        local_filename,
                         caption=f"Instagram {m_type} from {url}"
                     ))
+                # Schedule local file deletion
+                asyncio.create_task(schedule_deletion(local_filename))
             except WebpageCurlFailed as e:
-                print(f"[WebpageCurlFailed] {m_url}: {e}")
+                print(f"[WebpageCurlFailed] Local {local_filename}: {e}")
                 continue
             except Exception as e:
-                print(f"[SendMediaErr] {m_url}: {e}")
+                print(f"[SendMediaErr] Local {local_filename}: {e}")
+                continue
+            continue
+
+        # Try sending direct URL
+        try:
+            if m_type == "video":
+                media_msgs.append(await message.reply_video(
+                    m_url,
+                    caption=f"Instagram {m_type} from {url}"
+                ))
+            elif m_type == "image":
+                media_msgs.append(await message.reply_photo(
+                    m_url,
+                    caption=f"Instagram {m_type} from {url}"
+                ))
+        except WebpageCurlFailed as e:
+            print(f"[WebpageCurlFailed] {m_url}: {e}")
+            # Fallback to downloading locally
+            local_filename = f"media_{time.time()}.{m_type}"
+            if not await download_media_locally(m_url, local_filename):
                 continue
 
-        if not media_msgs:
-            return await msg.edit("❌ No valid media could be sent.")
+            try:
+                if m_type == "video":
+                    media_msgs.append(await message.reply_video(
+                        local_filename,
+                        caption=f"Instagram {m_type} from {url}"
+                    ))
+                elif m_type == "image":
+                    media_msgs.append(await message.reply_photo(
+                        local_filename,
+                        caption=f"Instagram {m_type} from {url}"
+                    ))
+                # Schedule local file deletion
+                asyncio.create_task(schedule_deletion(local_filename))
+            except Exception as e:
+                print(f"[SendMediaErr] Local {local_filename}: {e}")
+                continue
+        except Exception as e:
+            print(f"[SendMediaErr] {m_url}: {e}")
+            continue
 
-        await msg.delete()
+    if not media_msgs:
+        return await msg.edit("❌ No valid media could be sent.")
 
-        # Schedule deletion of user-shared files (only replies, not dump)
-        async def delete_instas():
-            await asyncio.sleep(420)
-            for m in media_msgs:
-                try:
-                    await m.delete()
-                except Exception:
-                    pass
-        asyncio.create_task(delete_instas())
+    await msg.delete()
 
-    except Exception as e:
-        print(f"[IG Err] {e}")
-        await msg.edit("❌ Failed to download Instagram media.")
+    # Schedule deletion of user-shared files (only replies, not dump)
+    async def delete_instas():
+        await asyncio.sleep(420)
+        for m in media_msgs:
+            try:
+                await m.delete()
+            except Exception:
+                pass
+    asyncio.create_task(delete_instas())
