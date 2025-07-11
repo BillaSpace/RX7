@@ -9,11 +9,18 @@ API_ID = int(getenv("API_ID", ""))
 API_HASH = getenv("API_HASH", "")
 BOT_TOKEN = getenv("BOT_TOKEN", "")
 MONGO_DB_URI = getenv("MONGO_DB_URI", "")
+
+API_URL = getenv("API_URL", "BillaSpace.com/api")
+API_URL2 = getenv("API_URL2", "BillaSpace.com/aryt")
+
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 4000))
+
 LOGGER_ID = int(getenv("LOGGER_ID", ""))
 OWNER_ID = int(getenv("OWNER_ID", "6257927828"))
+
 HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")
 HEROKU_API_KEY = getenv("HEROKU_API_KEY")
+
 UPSTREAM_REPO = getenv(
     "UPSTREAM_REPO",
     "https://github.com/J9VX/VX7",
@@ -24,13 +31,17 @@ GIT_TOKEN = getenv(
 )
 
 AUTO_LEAVING_ASSISTANT = bool(getenv("AUTO_LEAVING_ASSISTANT", True))
+
 SPOTIFY_CLIENT_ID = getenv("SPOTIFY_CLIENT_ID", "2d3fd5ccdd3d43dda6f17864d8eb7281")
 SPOTIFY_CLIENT_SECRET = getenv("SPOTIFY_CLIENT_SECRET", "48d311d8910a4531ae81205e1f754d27")
-PLAYLIST_FETCH_LIMIT = int(getenv("PLAYLIST_FETCH_LIMIT", 50))
+PLAYLIST_FETCH_LIMIT = int(getenv("PLAYLIST_FETCH_LIMIT", 300))
+
 TG_AUDIO_FILESIZE_LIMIT = int(getenv("TG_AUDIO_FILESIZE_LIMIT", 104857600))
 TG_VIDEO_FILESIZE_LIMIT = int(getenv("TG_VIDEO_FILESIZE_LIMIT", 1073741824))
+
 SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/storm_techh")
 SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/storm_core")
+
 START_IMG_URL = getenv("START_IMG_URL", "https://files.catbox.moe/48oog4.jpg")
 PING_IMG_URL = getenv("PING_IMG_URL", "https://files.catbox.moe/d3c03y.jpg")
 PLAYLIST_IMG_URL = getenv("PLAYLIST_IMG_URL", "https://files.catbox.moe/d3c03y.jpg")
