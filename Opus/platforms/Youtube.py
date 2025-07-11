@@ -4,6 +4,7 @@ import re
 import json
 from typing import Union
 import requests
+import random
 import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
@@ -23,22 +24,8 @@ def cookie_txt_file():
     cookie_file = os.path.join(cookie_dir, random.choice(cookies_files))
     return cookie_file
 
+
 async def download_song(link: str, download_mode: str = "audio"):
-    video_id = link.split('v=')[-1].split('&')[0]
-    download_folder = "downloads"
-    
-    # Check if file already exists
-    for ext in ["mp3", "m4a", "webm"]:
-        file_path = f"{download_folder}/{video_id}.{ext}"
-        if os.path.exists(file_path):
-            return file_path
-    
-    # Try API_URL first (supports both audio and video)
-    song_url = f"{API_URL}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
-    async with aiohttp.ClientSession() as session:
-        for attempt in range(10):
-            try:
-      async def download_song(link: str, download_mode: str = "audio"):
     video_id = link.split('v=')[-1].split('&')[0]
     download_folder = "downloads"
     
@@ -53,7 +40,7 @@ async def download_song(link: str, download_mode: str = "audio"):
     async with aiohttp.ClientSession() as session:
         for attempt in range(5):  # Reduced retries for faster fallback
             try:
-                async with session.get(song_url, timeout=10) as response:  # Added timeout for speed
+                async with session.get(song_url, timeout=10) as response:
                     if response.status != 200:
                         raise Exception(f"API request failed with status code {response.status}")
                     
