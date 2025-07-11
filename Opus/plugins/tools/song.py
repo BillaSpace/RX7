@@ -234,7 +234,7 @@ async def download_song(_, message: Message):
 
 @app.on_message(filters.command(["ig", "reel", "insta"], prefixes=["/", "!", "."]))
 async def download_instagram(_, message: Message):
-    """Handle /ig, /reel, or /insta command to download Instagram media."""
+    """Handle /ig, /reel, or /insta command to download up to two Instagram media items."""
     user_id = message.from_user.id
     if await check_spam(user_id):
         return await delete_message_with_delay(
@@ -269,63 +269,104 @@ async def download_instagram(_, message: Message):
                 return await msg.edit("❌ No media found or private post.")
             break
         except Exception as e:
-            print(f"[IG API Err] Attempt {attempt + 1}/{max_retries}: {e}")
+            print(f"[IG API Err] Attempt {attempt + 1}/{max_retries} for {url}: {e}")
             if attempt + 1 == max_retries:
                 return await msg.edit("❌ Failed to fetch Instagram media after retries.")
             await asyncio.sleep(retry_delay)
 
     media_msgs = []
-    for media in items[0].get("media", []):
+    media_count = 0
+    # Process only the first two valid media items
+    for media in items[0].get("media", [])[:2]:
         m_url = media.get("url")
         m_type = media.get("type")
         if not m_url or not m_type:
+            print(f"[InvalidMedia] Skipping media item: url={m_url}, type={m_type}")
             continue
 
-        # Try sending direct URL
+        # Try sending direct URL as primary method
         try:
             if m_type == "video":
                 sent_msg = await message.reply_video(
                     m_url,
-                    caption=f"Instagram {m_type} from {url}",
+                    caption=f" Recreation Music Successfully ✅ Downloaded Insta Reel{m_type} from API through {url}",
                     supports_streaming=True
                 )
                 media_msgs.append(sent_msg)
+                media_count += 1
             elif m_type == "image":
                 sent_msg = await message.reply_photo(
                     m_url,
-                    caption=f"Instagram {m_type} from {url}"
+                    caption=f"Recreation Music Successfully ✅ Fetched Instagram Post {m_type} from API through {url}"
                 )
                 media_msgs.append(sent_msg)
+                media_count += 1
         except WebpageCurlFailed as e:
             print(f"[WebpageCurlFailed] {m_url}: {e}")
-            # Fallback to downloading locally
+            # Fallback to local downloading
             local_filename = f"media_{int(time.time())}.{m_type}"
             if not await download_media_locally(m_url, local_filename, headers=headers):
-                print(f"[LocalDownloadFailed] {m_url}")
+                print(f"[LocalDownloadFailed] {m_url}: Failed to download media locally")
                 continue
 
             try:
                 if m_type == "video":
                     sent_msg = await message.reply_video(
                         local_filename,
-                        caption=f"Instagram {m_type} from {url}",
+                        caption=f"Recreation Music Successfully ✅ Fetched Instagram Reel {m_type} from {url}",
                         supports_streaming=True
                     )
                     media_msgs.append(sent_msg)
+                    media_count += 1
                 elif m_type == "image":
                     sent_msg = await message.reply_photo(
                         local_filename,
-                        caption=f"Instagram {m_type} from {url}"
+                        caption=f"Recreation Music Successfully ✅ Fetched Instagram Post {m_type} from {url}"
                     )
                     media_msgs.append(sent_msg)
+                    media_count += 1
                 # Schedule local file deletion
                 asyncio.create_task(schedule_deletion(local_filename))
             except Exception as e:
                 print(f"[SendMediaErr] Local {local_filename}: {e}")
+                if os.path.exists(local_filename):
+                    asyncio.create_task(schedule_deletion(local_filename))
                 continue
         except Exception as e:
-            print(f"[SendMediaErr] {m_url}: {e}")
-            continue
+            print(f"[SendMediaErr] Direct {m_url}: {e}")
+            # Fallback to local downloading
+            local_filename = f"media_{int(time.time())}.{m_type}"
+            if not await download_media_locally(m_url, local_filename, headers=headers):
+                print(f"[LocalDownloadFailed] {m_url}: Failed to download media locally")
+                continue
+
+            try:
+                if m_type == "video":
+                    sent_msg = await message.reply_video(
+                        local_filename,
+                        caption=f"Downloaded Locally from Instagram {m_type} from {url}",
+                        supports_streaming=True
+                    )
+                    media_msgs.append(sent_msg)
+                    media_count += 1
+                elif m_type == "image":
+                    sent_msg = await message.reply_photo(
+                        local_filename,
+                        caption=f"Locally Downloadedn from Instagram {m_type} from {url}"
+                    )
+                    media_msgs.append(sent_msg)
+                    media_count += 1
+                # Schedule local file deletion
+                asyncio.create_task(schedule_deletion(local_filename))
+            except Exception as e:
+                print(f"[SendMediaErr] Local {local_filename}: {e}")
+                if os.path.exists(local_filename):
+                    asyncio.create_task(schedule_deletion(local_filename))
+                continue
+
+        # Stop after sending two media items
+        if media_count >= 2:
+            break
 
     if not media_msgs:
         return await msg.edit("❌ No valid media could be sent.")
@@ -340,5 +381,5 @@ async def download_instagram(_, message: Message):
                 await m.delete()
                 print(f"[AutoDelete] Deleted message {m.id} in chat {m.chat.id}")
             except Exception as e:
-                print(f"[DeleteMediaErr] Message {m.id}: {e}")
+                print(f"[DeleteMediaErr] Message {m.id} in chat {m.chat.id}: {e}")
     asyncio.create_task(delete_instas())
