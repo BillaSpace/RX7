@@ -3,9 +3,10 @@ import asyncio
 import time
 import requests
 import yt_dlp
-from youtubesearchpython.__future__ import VideosSearch  # Updated import
+from youtubesearchpython.__future__ import VideosSearch
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.errors import WebpageCurlFailed
 
 from Opus import app
 from config import SONG_DUMP_ID, API_URL2  # Ensure these are defined
@@ -61,6 +62,15 @@ async def download_thumbnail(url: str, filename: str) -> bool:
         print(f"[ThumbErr] {e}")
         return False
 
+async def validate_url(url: str) -> bool:
+    """Validate if a URL is accessible."""
+    try:
+        r = requests.head(url, timeout=10, allow_redirects=True)
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[URLValidationErr] {url}: {e}")
+        return False
+
 @app.on_message(filters.command(["song", "music"]))
 async def download_song(_, message: Message):
     """Handle /song or /music command to download audio from YouTube or fallback API."""
@@ -77,12 +87,12 @@ async def download_song(_, message: Message):
     msg = await message.reply("🔍 Searching YouTube...")
 
     try:
-        # Asynchronous YouTube search using youtubesearchpython.__future__
+        # Search using youtubesearchpython exclusively
         videos_search = VideosSearch(query, limit=1)
         res = await videos_search.next()
         videos = res.get("result", [])
         if not videos:
-            return await msg.edit("❌ No results found.")
+            return await msg.edit("❌ No results found on YouTube.")
 
         vid = videos[0]
         yt_url = f"https://youtube.com/watch?v={vid['id']}"
@@ -122,19 +132,23 @@ async def download_song(_, message: Message):
                 audio_path = ydl.prepare_filename(info)
         except Exception as e:
             print(f"[YTDLP Fail] {e}")
-            await msg.edit("⚠️ YouTube download failed. Trying fallback...")
+            await msg.edit("⚠️ YouTube download failed. Trying fallback API...")
 
             # Fallback to API_URL2 for downloading audio file
-            r = requests.get(f"{API_URL2}?query={query}", timeout=15)
-            r.raise_for_status()
-            data = r.json()
-            url2 = data.get("audio_url")
-            if not url2:
-                return await msg.edit("❌ Fallback API returned no audio.")
+            try:
+                r = requests.get(f"{API_URL2}?url={yt_url}", timeout=15)
+                r.raise_for_status()
+                data = r.json()
+                url2 = data.get("audio_url")
+                if not url2:
+                    return await msg.edit("❌ Fallback API returned no audio.")
 
-            audio_path = f"{title}.mp3"
-            with open(audio_path, "wb") as f:
-                f.write(requests.get(url2, timeout=15).content)
+                audio_path = f"{title}.mp3"
+                with open(audio_path, "wb") as f:
+                    f.write(requests.get(url2, timeout=15).content)
+            except Exception as e:
+                print(f"[FallbackAPI Fail] {e}")
+                return await msg.edit("❌ Failed to download audio from fallback API.")
 
         # Prepare caption
         cap = (
@@ -212,10 +226,32 @@ async def download_instagram(_, message: Message):
             m_type = media.get("type")
             if not m_url or not m_type:
                 continue
-            if m_type == "video":
-                media_msgs.append(await message.reply_video(m_url))
-            elif m_type == "image":
-                media_msgs.append(await message.reply_photo(m_url))
+
+            # Validate URL before sending
+            if not await validate_url(m_url):
+                print(f"[InvalidMediaURL] {m_url} is not accessible")
+                continue
+
+            try:
+                if m_type == "video":
+                    media_msgs.append(await message.reply_video(
+                        m_url,
+                        caption=f"Instagram {m_type} from {url}"
+                    ))
+                elif m_type == "image":
+                    media_msgs.append(await message.reply_photo(
+                        m_url,
+                        caption=f"Instagram {m_type} from {url}"
+                    ))
+            except WebpageCurlFailed as e:
+                print(f"[WebpageCurlFailed] {m_url}: {e}")
+                continue
+            except Exception as e:
+                print(f"[SendMediaErr] {m_url}: {e}")
+                continue
+
+        if not media_msgs:
+            return await msg.edit("❌ No valid media could be sent.")
 
         await msg.delete()
 
