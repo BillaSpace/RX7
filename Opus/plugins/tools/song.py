@@ -3,7 +3,7 @@ import asyncio
 import time
 import requests
 import yt_dlp
-from youtubesearchpython.future import VideosSearch
+from youtubesearchpython.__future__ import VideosSearch
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import WebpageCurlFailed
