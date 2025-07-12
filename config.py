@@ -16,7 +16,7 @@ API_URL2 = getenv("API_URL2", "BillaSpace.com/aryt")
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 4000))
 
 LOGGER_ID = int(getenv("LOGGER_ID") or "-1002374471356")
-OWNER_ID = int(getenv("OWNER_ID", "5960968099")
+OWNER_ID = int(getenv("OWNER_ID") or "5960968099")
 SONG_DUMP_ID = int(getenv("SONG_DUMP_ID", "-1002374471356")) # Change to your group/channel ID
 
 
