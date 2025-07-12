@@ -3,7 +3,7 @@ import asyncio
 import time
 import requests
 import yt_dlp
-from youtubesearchpython.__future__ import VideosSearch
+from youtubesearchpython.future import VideosSearch
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import WebpageCurlFailed
@@ -86,12 +86,15 @@ async def download_media_locally(url: str, filename: str, headers: dict = None) 
         return False
 
 def extract_video_id(url: str) -> str:
-    """Extract YouTube video ID from a URL."""
+    """Extract YouTube video ID from a URL, including music.youtube.com."""
     parsed_url = urlparse(url)
-    if parsed_url.hostname in ("youtu.be",):
+    hostname = parsed_url.hostname or ""
+    if hostname in ("youtu.be",):
         return parsed_url.path[1:]
-    if parsed_url.hostname in ("www.youtube.com", "youtube.com"):
+    if hostname in ("www.youtube.com", "youtube.com", "music.youtube.com"):
         query_params = parse_qs(parsed_url.query)
+        if "list" in query_params:
+            return None  # Disallow playlists
         return query_params.get("v", [None])[0]
     return None
 
@@ -101,27 +104,46 @@ async def download_song(_, message: Message):
     user_id = message.from_user.id
     if await check_spam(user_id):
         return await delete_message_with_delay(
-            message, f"**{message.from_user.mention} Slow down! Try again later.**"
+            message, f"{message.from_user.mention} Slow down! Try again later."
         )
 
     if len(message.command) < 2:
-        return await message.reply("**Please provide a song name.**")
+        return await message.reply("**Please provide a song name or YouTube URL.**")
 
     query = " ".join(message.command[1:])
-    msg = await message.reply("🔍 Searching YouTube...")
+    msg = await message.reply("🔍 Searching In YouTube...")
 
     try:
-        # Search using youtubesearchpython exclusively
-        videos_search = VideosSearch(query, limit=1)
-        res = await videos_search.next()
-        videos = res.get("result", [])
-        if not videos:
-            return await msg.edit("❌ No results found on YouTube.")
+        # Check if the query is a URL
+        video_id = extract_video_id(query)
+        if video_id is None and ("list=" in query.lower() or "playlist" in query.lower()):
+            return await msg.edit("❌ Playlist URLs are not allowed to prevent server overload.")
 
-        vid = videos[0]
-        yt_url = f"https://youtube.com/watch?v={vid['id']}"
-        video_id = vid['id']  # Directly use video ID from search result
-        title = vid["title"][:60]
+        # Search using youtubesearchpython if not a valid video URL
+        if not video_id:
+            videos_search = VideosSearch(query, limit=1)
+            res = await videos_search.next()
+            videos = res.get("result", [])
+            if not videos:
+                return await msg.edit("❌ No results found on YouTube.")
+            vid = videos[0]
+            video_id = vid["id"]
+            yt_url = f"https://youtube.com/watch?v={video_id}"
+        else:
+            yt_url = query if query.startswith("http") else f"https://youtube.com/watch?v={video_id}"
+            # Fetch video info using yt_dlp to get metadata
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                info = ydl.extract_info(yt_url, download=False)
+                vid = {
+                    "id": video_id,
+                    "title": info.get("title", "Unknown Title")[:60],
+                    "thumbnails": [{"url": info.get("thumbnail", "")}],
+                    "channel": {"name": info.get("uploader", "Unknown Channel")},
+                    "duration": info.get("duration_string", "0:00"),
+                    "viewCount": {"text": f"{info.get('view_count', 0):,}"}
+                }
+
+        title = vid["title"]
         thumb_url = vid["thumbnails"][0]["url"] if vid.get("thumbnails") else ""
         channel = vid.get("channel", {}).get("name", "Unknown Channel")
         duration = vid.get("duration", "0:00")
@@ -163,7 +185,7 @@ async def download_song(_, message: Message):
             try:
                 if not video_id:
                     return await msg.edit("❌ Could not extract video ID for fallback API.")
-                
+
                 # Make request to API_URL2, expecting direct MP3 content
                 r = requests.get(f"{API_URL2}?direct&id={video_id}", timeout=15, stream=True)
                 r.raise_for_status()
@@ -224,9 +246,20 @@ async def download_song(_, message: Message):
         await msg.delete()
 
         # Schedule deletion for user copy only
-        asyncio.create_task(schedule_deletion(audio_path))
+        if os.path.exists(audio_path):
+            asyncio.create_task(schedule_deletion(audio_path))
         if os.path.exists(thumb_file):
             asyncio.create_task(schedule_deletion(thumb_file))
+
+        # Schedule deletion of the sent audio message
+        async def delete_audio_message():
+            await asyncio.sleep(420)
+            try:
+                await sent.delete()
+                print(f"[AutoDelete] Deleted audio message {sent.id} in chat {sent.chat.id}")
+            except Exception as e:
+                print(f"[DeleteAudioMsgErr] Message {sent.id}: {e}")
+        asyncio.create_task(delete_audio_message())
 
     except Exception as e:
         print(f"[Unhandled Song Err] {e}")
@@ -238,7 +271,7 @@ async def download_instagram(_, message: Message):
     user_id = message.from_user.id
     if await check_spam(user_id):
         return await delete_message_with_delay(
-            message, f"**{message.from_user.mention} Please don’t spam.**"
+            message, f"{message.from_user.mention} Please don’t spam."
         )
 
     if len(message.command) < 2:
@@ -289,7 +322,7 @@ async def download_instagram(_, message: Message):
             if m_type == "video":
                 sent_msg = await message.reply_video(
                     m_url,
-                    caption=f" Recreation Music Successfully ✅ Downloaded Insta Reel{m_type} from API through {url}",
+                    caption=f"Recreation Music Successfully ✅ Downloaded Insta Reel {m_type} from API through {url}",
                     supports_streaming=True
                 )
                 media_msgs.append(sent_msg)
@@ -301,37 +334,9 @@ async def download_instagram(_, message: Message):
                 )
                 media_msgs.append(sent_msg)
                 media_count += 1
-        except WebpageCurlFailed as e:
-            print(f"[WebpageCurlFailed] {m_url}: {e}")
-            # Fallback to local downloading
-            local_filename = f"media_{int(time.time())}.{m_type}"
-            if not await download_media_locally(m_url, local_filename, headers=headers):
-                print(f"[LocalDownloadFailed] {m_url}: Failed to download media locally")
-                continue
-
-            try:
-                if m_type == "video":
-                    sent_msg = await message.reply_video(
-                        local_filename,
-                        caption=f"Recreation Music Successfully ✅ Fetched Instagram Reel {m_type} from {url}",
-                        supports_streaming=True
-                    )
-                    media_msgs.append(sent_msg)
-                    media_count += 1
-                elif m_type == "image":
-                    sent_msg = await message.reply_photo(
-                        local_filename,
-                        caption=f"Recreation Music Successfully ✅ Fetched Instagram Post {m_type} from {url}"
-                    )
-                    media_msgs.append(sent_msg)
-                    media_count += 1
-                # Schedule local file deletion
-                asyncio.create_task(schedule_deletion(local_filename))
-            except Exception as e:
-                print(f"[SendMediaErr] Local {local_filename}: {e}")
-                if os.path.exists(local_filename):
-                    asyncio.create_task(schedule_deletion(local_filename))
-                continue
+        except WebpageCurlFailed:
+            # Suppress logging for WebpageCurlFailed
+            pass
         except Exception as e:
             print(f"[SendMediaErr] Direct {m_url}: {e}")
             # Fallback to local downloading
@@ -352,12 +357,13 @@ async def download_instagram(_, message: Message):
                 elif m_type == "image":
                     sent_msg = await message.reply_photo(
                         local_filename,
-                        caption=f"Locally Downloadedn from Instagram {m_type} from {url}"
+                        caption=f"Locally Downloaded from Instagram {m_type} from {url}"
                     )
                     media_msgs.append(sent_msg)
                     media_count += 1
                 # Schedule local file deletion
-                asyncio.create_task(schedule_deletion(local_filename))
+                if os.path.exists(local_filename):
+                    asyncio.create_task(schedule_deletion(local_filename))
             except Exception as e:
                 print(f"[SendMediaErr] Local {local_filename}: {e}")
                 if os.path.exists(local_filename):
@@ -374,7 +380,7 @@ async def download_instagram(_, message: Message):
     await msg.delete()
 
     # Schedule deletion of user-shared files (applies to both group and DMs)
-    async def delete_instas():
+    async def delete_instagram_messages():
         await asyncio.sleep(420)
         for m in media_msgs:
             try:
@@ -382,4 +388,4 @@ async def download_instagram(_, message: Message):
                 print(f"[AutoDelete] Deleted message {m.id} in chat {m.chat.id}")
             except Exception as e:
                 print(f"[DeleteMediaErr] Message {m.id} in chat {m.chat.id}: {e}")
-    asyncio.create_task(delete_instas())
+    asyncio.create_task(delete_instagram_messages())
