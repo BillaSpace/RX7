@@ -166,6 +166,8 @@ class Call(PyTgCalls):
     async def speedup_stream(self, chat_id: int, file_path, speed, playing):
         try:
             assistant = await group_assistant(self, chat_id)
+            # Determine output extension based on input file or mode
+            extension = os.path.splitext(file_path)[1].lower() or (".mp4" if playing[0]["streamtype"] == "video" else ".mp3")
             if str(speed) != "1.0":
                 base = os.path.basename(file_path)
                 chatdir = os.path.join(os.getcwd(), "playback", str(speed))
@@ -204,7 +206,7 @@ class Call(PyTgCalls):
             else:
                 out = file_path
             # Preprocess for seeking
-            temp_file = tempfile.NamedTemporaryFile(suffix=".mp4" if playing[0]["streamtype"] == "video" else ".mp3", delete=False)
+            temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
             temp_file.close()
             played, con_seconds = speed_converter(playing[0]["played"], speed)
@@ -304,7 +306,9 @@ class Call(PyTgCalls):
     async def seek_stream(self, chat_id, file_path, to_seek, duration, mode):
         try:
             assistant = await group_assistant(self, chat_id)
-            temp_file = tempfile.NamedTemporaryFile(suffix=".mp4" if mode == "video" else ".mp3", delete=False)
+            # Determine output extension based on input file or mode
+            extension = os.path.splitext(file_path)[1].lower() or (".mp4" if mode == "video" else ".mp3")
+            temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
             temp_file.close()
             ffmpeg_cmd = [
@@ -351,7 +355,7 @@ class Call(PyTgCalls):
             config.LOGGER_ID,
             MediaStream(link),
         )
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
         await assistant.leave_group_call(config.LOGGER_ID)
 
     async def join_call(
@@ -662,14 +666,6 @@ class Call(PyTgCalls):
         @self.three.on_left()
         @self.four.on_left()
         @self.five.on_left()
-        async def stream_services_handler(_, chat_id: int):
-            await self.stop_stream(chat_id)
-
-        @self.one.on_stream_end()
-        @self.two.on_stream_end()
-        @self.three.on_stream_end()
-        @self.four.on_stream_end()
-        @self.five.on_stream_end()
         async def stream_end_handler(client, update: Update):
             if not isinstance(update, StreamAudioEnded):
                 return
