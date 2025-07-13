@@ -2,7 +2,7 @@ import asyncio
 import os
 import re
 import json
-from typing import Tuple, Union
+from typing import Union
 import requests
 import random
 import yt_dlp
@@ -21,21 +21,39 @@ def cookie_txt_file():
     cookie_file = os.path.join(cookie_dir, random.choice(cookies_files))
     return cookie_file
 
-async def download_song(link: str, download_mode: str = "audio") -> Tuple[Union[str, None], str]:
+
+async def download_song(link: str, download_mode: str = "audio"):
     video_id = link.split('v=')[-1].split('&')[0]
     download_folder = "downloads"
     file_extension = "mp3" if download_mode == "audio" else "mp4"
     file_path = os.path.join(download_folder, f"{video_id}.{file_extension}")
 
     if os.path.exists(file_path):
-        return file_path, "File already exists"
+        return file_path
 
     os.makedirs(download_folder, exist_ok=True)
 
+    async def download_file(url, path):
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(url, timeout=60) as response:
+                    if response.status != 200:
+                        raise Exception(f"File download failed with status {response.status}")
+                    with open(path, 'wb') as f:
+                        while True:
+                            chunk = await response.content.read(8192)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    return True
+            except Exception as e:
+                print(f"[File Download Error] {e}")
+                return False
+
+    # Try API 1
+    song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
     async with aiohttp.ClientSession() as session:
-        # Try API 1
-        song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
-        for attempt in range(3):
+        for attempt in range(1):
             try:
                 async with session.get(song_url, timeout=30) as response:
                     if response.status != 200:
@@ -44,50 +62,31 @@ async def download_song(link: str, download_mode: str = "audio") -> Tuple[Union[
                     if data.get("status") != 200 or data.get("successful") != "success":
                         raise Exception(f"API 1 error: {data.get('message', 'Unknown error')}")
                     download_url = data.get("data", {}).get("url")
-                    filename = data.get("data", {}).get("filename")
-                    if not download_url or not filename:
-                        raise Exception("API 1 response missing download URL or filename")
-                    safe_filename = f"{video_id}.{file_extension}"
-                    file_path = os.path.join(download_folder, safe_filename)
-                    async with session.get(download_url, timeout=60) as file_response:
-                        if file_response.status != 200:
-                            raise Exception(f"File download failed with status {file_response.status}")
-                        with open(file_path, 'wb') as f:
-                            while True:
-                                chunk = await file_response.content.read(8192)
-                                if not chunk:
-                                    break
-                                f.write(chunk)
-                        return file_path, "Downloaded via API 1"
+                    if not download_url:
+                        raise Exception("API 1 response missing download URL")
+                    if await download_file(download_url, file_path):
+                        return file_path
             except Exception as e:
                 print(f"[API 1 failed, attempt {attempt + 1}/3] {e}")
                 await asyncio.sleep(1)
 
-        # Try API 2 (audio only)
-        if download_mode == "audio":
-            song_url2 = f"{API_URL2}?direct&id={video_id}"
+    # Try API 2 (audio only)
+    if download_mode == "audio":
+        song_url2 = f"{API_URL2}?direct&id={video_id}"
+        async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(song_url2, timeout=30) as response2:
-                    if response2.status != 200:
-                        raise Exception(f"API 2 request failed with status {response2.status}")
-                    download_url = await response2.text()
+                async with session.get(song_url2, timeout=30) as response:
+                    if response.status != 200:
+                        raise Exception(f"API 2 request failed with status {response.status}")
+                    download_url = await response.text()
                     if not download_url.startswith("http"):
                         raise Exception("API 2 did not return a valid download URL")
-                    file_path = os.path.join(download_folder, f"{video_id}.mp3")
-                    async with session.get(download_url, timeout=15) as file_response:
-                        if file_response.status != 200:
-                            raise Exception(f"File download failed with status {file_response.status}")
-                        with open(file_path, 'wb') as f:
-                            while True:
-                                chunk = await file_response.content.read(8192)
-                                if not chunk:
-                                    break
-                                f.write(chunk)
-                        return file_path, "Downloaded via API 2"
+                    if await download_file(download_url, file_path):
+                        return file_path
             except Exception as e:
                 print(f"[API 2 failed] {e}")
 
-    return None, "All API attempts failed"
+    return None
 
 
 async def check_file_size(link):
