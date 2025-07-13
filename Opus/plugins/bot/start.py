@@ -44,12 +44,20 @@ async def start_pm(client, message: Message, _):
                     disable_web_page_preview=True
                 )
             return
+
         if name[0:3] == "inf":
             m = await message.reply_text("🔎")
-            query = (str(name)).replace("info_", "", 1)
-            query = f"https://www.youtube.com/watch?v={query}"
-            results = VideosSearch(query, limit=1)
-            for result in results.next()["result"]:
+            query = str(name).replace("info_", "", 1)
+
+            try:
+                results = VideosSearch(query, limit=1).result()
+                result_list = results.get("result")
+
+                if not result_list:
+                    await m.delete()
+                    return await message.reply("No results found.")
+
+                result = result_list[0]
                 title = result["title"]
                 duration = result["duration"]
                 views = result["viewCount"]["short"]
@@ -57,31 +65,35 @@ async def start_pm(client, message: Message, _):
                 channel = result["channel"]["name"]
                 link = result["link"]
                 published = result["publishedTime"]
-            searched_text = _["start_6"].format(
-                title, duration, views, published, channellink, channel, app.mention
-            )
-            key = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(text=_["S_B_8"], url=link),
-                        InlineKeyboardButton(text=_["S_B_9"], url=config.SUPPORT_CHAT),
-                    ],
-                ]
-            )
-            await m.delete()
-            await message.reply(
-                text=searched_text,
-                reply_markup=key,
-            )
-            if await is_on_off(2):
-                return await app.send_message(
-                    chat_id=config.LOGGER_ID,
-                    text=f"<blockquote><b>» <a href='https://t.me/{message.from_user.username}'>ᴜsᴇʀ</a> ᴊᴜsᴛ sᴛᴀʀᴛᴇᴅ ᴛʜᴇ ʙᴏᴛ ᴛᴏ ᴄʜᴇᴄᴋ ᴛʀᴀᴄᴋ ɪɴғᴏʀᴍᴀᴛɪᴏɴ</b>\n<b>ᴜsᴇʀ ɪᴅ :</b> <code>{message.from_user.id}</code></blockquote>",
-                    disable_web_page_preview=False
+
+                searched_text = _["start_6"].format(
+                    title, duration, views, published, channellink, channel, app.mention
                 )
+                key = InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(text=_["S_B_8"], url=link),
+                            InlineKeyboardButton(text=_["S_B_9"], url=config.SUPPORT_CHAT),
+                        ],
+                    ]
+                )
+                await m.delete()
+                await message.reply(
+                    text=searched_text,
+                    reply_markup=key,
+                )
+                if await is_on_off(2):
+                    return await app.send_message(
+                        chat_id=config.LOGGER_ID,
+                        text=f"<blockquote><b>» <a href='https://t.me/{message.from_user.username}'>ᴜsᴇʀ</a> ᴊᴜsᴛ sᴛᴀʀᴛᴇᴅ ᴛʜᴇ ʙᴏᴛ ᴛᴏ ᴄʜᴇᴄᴋ ᴛʀᴀᴄᴋ ɪɴғᴏʀᴍᴀᴛɪᴏɴ</b>\n<b>ᴜsᴇʀ ɪᴅ :</b> <code>{message.from_user.id}</code></blockquote>",
+                        disable_web_page_preview=False
+                    )
+            except Exception as e:
+                await m.delete()
+                return await message.reply(f"Error: {e}")
+
     else:
         await message.reply_sticker("CAACAgUAAxkBAAKSRGgUiq7a6XfXos3Gb8QK830AAef2vAACcwcAAiRO8VXjkW9AnnwsLR4E")
-        
         out = private_panel(_)
         await message.reply(
             text='<blockquote><b><u>ᴅɪᴠᴇ ɪɴᴛᴏ ᴀ ᴍᴜꜱɪᴄᴀʟ ᴜɴɪᴠᴇʀꜱᴇ 🍁</u></b></blockquote>\n<blockquote><b>ɪ ᴡɪʟʟ ᴇʟᴇᴠᴀᴛᴇ ʏᴏᴜʀ ɢʀᴏᴜᴘ ᴠɪᴅᴇᴏ ᴄʜᴀᴛ ᴡɪᴛʜ ᴀᴡᴇsᴏᴍᴇ ᴍᴜsɪᴄ. ꜱᴛʀᴇᴀᴍ ᴍᴜꜱɪᴄ ᴀɴʏᴛɪᴍᴇ, ᴀɴʏᴡʜᴇʀᴇ\n/help ꜰᴏʀ ᴄᴏᴍᴍᴀɴᴅꜱ</b></blockquote>\n<blockquote><b>ꜰᴏʀ ᴜᴘᴅᴀᴛᴇꜱ @OpusAlertsBot\nƟᴘᴜs ᴠ2</b><a href="https://envs.sh/Pa1.mp4">.</a>0</blockquote>',
