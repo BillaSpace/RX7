@@ -28,10 +28,15 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
 
 # Path to cookies file and downloads directory
 COOKIES_PATH = "cookies/cookies.txt"
+FALLBACK_COOKIES_PATH = "cookies.txt"
 DOWNLOADS_DIR = "downloads/"
 
 async def ensure_cookies_file():
-    """Ensure cookies file exists, download if needed"""
+    """Ensure cookies file exists, download from URL or fall back to local cookies.txt"""
+    # Create cookies/ directory if it doesn't exist
+    os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
+    
+    # Check if primary cookies file exists
     if not os.path.exists(COOKIES_PATH):
         url = "https://v0-mongo-db-api-setup.vercel.app/api/cookies.txt"
         try:
@@ -41,11 +46,23 @@ async def ensure_cookies_file():
                         content = await response.read()
                         with open(COOKIES_PATH, 'wb') as f:
                             f.write(content)
-                        logger.info(f"Successfully downloaded cookies file. Size: {len(content)} bytes")
+                        logger.info(f"Successfully downloaded cookies file to {COOKIES_PATH}. Size: {len(content)} bytes")
                     else:
-                        logger.error(f"Failed to download cookies: HTTP {response.status}")
+                        logger.error(f"Failed to download cookies from {url}: HTTP {response.status}")
+                        # Fallback to cookies.txt in root folder
+                        if os.path.exists(FALLBACK_COOKIES_PATH):
+                            logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
+                            return
+                        else:
+                            logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
         except Exception as e:
-            logger.error(f"Error downloading cookies: {e}")
+            logger.error(f"Error downloading cookies from {url}: {e}")
+            # Fallback to cookies.txt in root folder
+            if os.path.exists(FALLBACK_COOKIES_PATH):
+                logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
+                return
+            else:
+                logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
     else:
         logger.info(f"Cookies file already exists: {COOKIES_PATH}")
 
@@ -76,7 +93,7 @@ ydl_opts = {
     }],
     'outtmpl': 'downloads/%(title)s.%(ext)s',
     'quiet': True,
-    'cookiefile': COOKIES_PATH,
+    'cookiefile': COOKIES_PATH if os.path.exists(COOKIES_PATH) else FALLBACK_COOKIES_PATH,
     'extract_flat': False,
     'retries': 10,
     'fragment_retries': 10,
@@ -107,12 +124,12 @@ async def download_youtube_audio(query):
     if os.path.exists(expected_filename):
         logger.info(f"File already exists, skipping download: {expected_filename}")
         try:
-            entry = {'title': sanitized_query, 'duration': 0, 'uploader': 'Unknown Artist', 'thumbnail': ''}
+            entry = {'title': sanitized_query, 'duration': 0, 'uploader': app.name, 'thumbnail': ''}
             return {
                 'filepath': expected_filename,
                 'title': entry.get('title', 'Unknown Track'),
                 'duration': entry.get('duration', 0),
-                'artist': entry.get('uploader', 'Unknown Artist'),
+                'artist': entry.get('uploader', app.name),
                 'thumbnail': entry.get('thumbnail', '')
             }
         except Exception as e:
@@ -148,7 +165,7 @@ async def download_youtube_audio(query):
                 'filepath': filepath,
                 'title': entry.get('title', 'Unknown Track'),
                 'duration': entry.get('duration', 0),
-                'artist': entry.get('uploader', 'Unknown Artist'),
+                'artist': entry.get('uploader', app.name),
                 'thumbnail': entry.get('thumbnail', '')
             }
     except Exception as e:
@@ -250,9 +267,9 @@ async def download_handler(client, callback_query):
                 audio=audio_info['filepath'],
                 title=track['name'],
                 duration=audio_info['duration'],
-                performer=RecreationMusic['artists'][0]['name'],
+                performer=app.name,
                 thumb=track['album']['images'][0]['url'] if track['album']['images'] else None,
-                caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])}"
+                caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])}\nPowered By Space-X Alpha API"
             )
             
             # Schedule auto-delete for the audio message (except in SONG_DUMP_ID)
@@ -267,9 +284,9 @@ async def download_handler(client, callback_query):
                         audio=audio_info['filepath'],
                         title=track['name'],
                         duration=audio_info['duration'],
-                        performer=track['artists'][0]['name'],
+                        performer=app.name,
                         thumb=track['album']['images'][0]['url'] if track['album']['images'] else None,
-                        caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])} (Shared from {callback_query.message.chat.title or callback_query.message.chat.id})"
+                        caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])}\n(Shared from {callback_query.message.chat.title or callback_query.message.chat.id})\nPowered By Space-X Alpha API"
                     )
                     logger.info(f"Sent audio to SONG_DUMP_ID: {SONG_DUMP_ID}")
                 except Exception as e:
