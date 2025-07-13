@@ -165,12 +165,34 @@ class Call(PyTgCalls):
         try:
             assistant = await group_assistant(self, chat_id)
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if playing[0]["streamtype"] == "video" else ".mp3")
-            logger.debug(f"Chat {chat_id}: Speeding up stream with file_path: {file_path}, extension: {extension}, speed: {speed}")
+            logger.debug(f"Chat {chat_id}: Speeding up stream with file_path: {file_path}, extension: {extension}, speed: {speed}, played: {playing[0]['played']}")
 
             # Validate input file
             if not os.path.exists(file_path):
                 logger.error(f"Chat {chat_id}: Input file {file_path} does not exist")
                 raise Exception(f"Input file {file_path} does not exist")
+
+            # Get current played position
+            raw_played = playing[0]["played"]
+            if isinstance(raw_played, int):
+                played = raw_played
+            elif isinstance(raw_played, str) and ":" in raw_played:
+                try:
+                    mins, secs = map(int, raw_played.strip().split(":"))
+                    played = mins * 60 + secs
+                except ValueError:
+                    logger.error(f"Chat {chat_id}: Invalid played format: {raw_played}")
+                    played = 0
+            elif isinstance(raw_played, str) and raw_played.isdigit():
+                played = int(raw_played)
+            else:
+                logger.error(f"Chat {chat_id}: Unrecognized played format: {raw_played}")
+                played = 0
+
+            # Adjust played for current speed
+            current_speed = playing[0].get("speed", 1.0)
+            if current_speed != 1.0:
+                played = int(played * (current_speed / float(speed)))
 
             # Use original file for speed 1.0, otherwise process with FFmpeg
             if str(speed) == "1.0":
@@ -196,6 +218,7 @@ class Call(PyTgCalls):
                     ffmpeg_cmd = [
                         "ffmpeg",
                         "-i", file_path,
+                        "-ss", str(played),  # Start from current played position
                         "-filter:v", f"setpts={vs}*PTS",
                         "-filter:a", f"atempo={speed}",
                         "-y", out
@@ -219,6 +242,13 @@ class Call(PyTgCalls):
                 logger.error(f"Chat {chat_id}: Output file {out} is missing or too small")
                 raise Exception("Output file is invalid or empty")
 
+            # Get duration of output file
+            dur = await loop.run_in_executor(None, check_duration, out)
+            dur = int(dur)
+            if dur <= 0:
+                logger.error(f"Chat {chat_id}: Invalid duration from output file: {dur}")
+                raise Exception("Invalid duration from output file")
+
             # Create MediaStream
             stream = (
                 MediaStream(
@@ -232,7 +262,7 @@ class Call(PyTgCalls):
                     AudioQuality.STUDIO,
                 )
             )
-            logger.debug(f"Chat {chat_id}: Created MediaStream with file: {out}")
+            logger.debug(f"Chat {chat_id}: Created MediaStream with file: {out}, duration: {dur}")
 
             # Log database state before update
             logger.debug(f"Chat {chat_id}: Pre-update db state: {db[chat_id][0]}")
@@ -264,10 +294,13 @@ class Call(PyTgCalls):
                 if not exis:
                     db[chat_id][0]["old_dur"] = db[chat_id][0]["dur"]
                     db[chat_id][0]["old_second"] = db[chat_id][0]["seconds"]
+                # Adjust duration and seconds for speed, preserve played position
                 db[chat_id][0]["dur"] = seconds_to_min(int(db[chat_id][0]["old_second"] / float(speed)))
                 db[chat_id][0]["seconds"] = int(db[chat_id][0]["old_second"] / float(speed))
                 db[chat_id][0]["speed_path"] = out if str(speed) != "1.0" else None
                 db[chat_id][0]["speed"] = float(speed)
+                db[chat_id][0]["played"] = played  # Preserve current played position
+                db[chat_id][0]["seeker_updated"] = False  # Reset for timer coordination
                 logger.debug(f"Chat {chat_id}: Post-update db state: {db[chat_id][0]}")
         except Exception as e:
             logger.error(f"Chat {chat_id}: Failed to speed up stream: {str(e)}", exc_info=True)
@@ -316,7 +349,7 @@ class Call(PyTgCalls):
         try:
             assistant = await group_assistant(self, chat_id)
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if mode == "video" else ".mp3")
-            logger.debug(f"Chat {chat_id}: Seeking stream with file_path: {file_path}, extension: {extension}, to_seek: {to_seek}, duration: {duration}")
+            logger.debug(f"Chat {chat_id}: Seeking stream with file_path: {file_path}, extension: {extension}, to_seek: {to_seek}, duration: {duration}, mode: {mode}")
 
             # Validate input parameters
             if not os.path.exists(file_path):
@@ -329,19 +362,26 @@ class Call(PyTgCalls):
                 logger.error(f"Chat {chat_id}: Invalid mode: {mode}")
                 raise Exception(f"Invalid mode: {mode}")
 
+            # Use speed-adjusted file if available
+            current_speed = db[chat_id][0].get("speed", 1.0)
+            input_file = db[chat_id][0].get("speed_path", file_path) if current_speed != 1.0 else file_path
+
+            # Adjust to_seek for current speed
+            to_seek_adjusted = int(to_seek / current_speed)
+
             temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
             temp_file.close()
             ffmpeg_cmd = [
                 "ffmpeg",
-                "-i", file_path,
-                "-ss", str(to_seek),
-                "-to", str(duration),
+                "-i", input_file,
+                "-ss", str(to_seek_adjusted),
+                "-to", str(int(duration / current_speed)),
                 "-c:a", "copy",
                 "-c:v", "copy",
                 "-y", temp_file_path
             ]
-            if file_path.startswith(("http://", "https://")):
+            if input_file.startswith(("http://", "https://")):
                 ffmpeg_cmd.insert(2, "-headers")
                 ffmpeg_cmd.insert(3, "User-Agent: Mozilla/5.0")
             logger.debug(f"Chat {chat_id}: Running FFmpeg command for seeking: {' '.join(ffmpeg_cmd)}")
@@ -405,6 +445,7 @@ class Call(PyTgCalls):
             db[chat_id][0]["played"] = to_seek
             db[chat_id][0]["dur"] = duration
             db[chat_id][0]["seconds"] = dur
+            db[chat_id][0]["seeker_updated"] = False  # Reset for timer coordination
             logger.debug(f"Chat {chat_id}: Post-update db state: {db[chat_id][0]}")
         except Exception as e:
             logger.error(f"Chat {chat_id}: Failed to seek stream: {str(e)}", exc_info=True)
@@ -495,6 +536,7 @@ class Call(PyTgCalls):
             streamtype = check[0]["streamtype"]
             videoid = check[0]["vidid"]
             db[chat_id][0]["played"] = 0
+            db[chat_id][0]["seeker_updated"] = False
             if exis := (check[0]).get("old_dur"):
                 db[chat_id][0]["dur"] = exis
                 db[chat_id][0]["seconds"] = check[0]["old_second"]
@@ -735,4 +777,5 @@ class Call(PyTgCalls):
                 return
             await self.change_stream(client, update.chat_id)
 
-Anony = Call() 
+Anony = Call()
+              
