@@ -23,19 +23,38 @@ async def timer():
             try:
                 if not await is_music_playing(chat_id):
                     continue
+
                 playing = db.get(chat_id)
                 if not playing:
                     continue
+
                 duration = playing[0]["seconds"]
-                # Convert played to int to handle string values
-                played = int(playing[0]["played"]) if isinstance(playing[0]["played"], (str, int)) else 0
+
+                # Safely convert "played" field to seconds
+                raw_played = playing[0]["played"]
+                if isinstance(raw_played, int):
+                    played = raw_played
+                elif isinstance(raw_played, str) and ":" in raw_played:
+                    try:
+                        mins, secs = map(int, raw_played.strip().split(":"))
+                        played = mins * 60 + secs
+                    except ValueError:
+                        played = 0
+                elif isinstance(raw_played, str) and raw_played.isdigit():
+                    played = int(raw_played)
+                else:
+                    played = 0
+
                 logger.debug(f"Chat {chat_id}: db state - played: {played}, duration: {duration}, file: {playing[0]['file']}")
+
                 if played >= duration:
                     await Anony.change_stream(chat_id)
                 else:
                     db[chat_id][0]["played"] = played + 1
+
             except Exception as e:
                 logger.error(f"Error processing chat {chat_id}: {str(e)}", exc_info=True)
+
         await asyncio.sleep(1)
 
 asyncio.create_task(timer())
