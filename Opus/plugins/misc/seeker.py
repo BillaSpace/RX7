@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from Opus.misc import db
-from Opus.utils.database import get_active_chats, is_music_playing, group_assistant
+from Opus.utils.database import get_active_chats, is_music_playing
 from Opus.core.call import Anony
 
 # Configure logging
@@ -48,10 +48,7 @@ async def timer():
                 logger.debug(f"Chat {chat_id}: db state - played: {played}, duration: {duration}, file: {playing[0]['file']}")
 
                 if played >= duration:
-                    # Get the appropriate client for the chat_id
-                    assistant = await group_assistant(Anony, chat_id)
-                    await Anony.change_stream(assistant, chat_id)
-                    logger.info(f"Chat {chat_id}: Successfully processed stream change")
+                    await Anony.change_stream(chat_id)
                 else:
                     db[chat_id][0]["played"] = played + 1
 
