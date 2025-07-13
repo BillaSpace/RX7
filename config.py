@@ -10,8 +10,8 @@ API_HASH = getenv("API_HASH", "")
 BOT_TOKEN = getenv("BOT_TOKEN", "")
 MONGO_DB_URI = getenv("MONGO_DB_URI", "")
 
-API_URL = getenv("API_URL", "BillaSpace.com/api")
-API_URL2 = getenv("API_URL2", "BillaSpace.com/aryt")
+API_URL1 = getenv("API_URL1", None)
+API_URL2 = getenv("API_URL2", None)
 
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 4000))
 
