@@ -4,7 +4,7 @@ from sys import version as pyver
 import psutil
 from pyrogram import __version__ as pyrover
 from pyrogram import filters
-from pyrogram.errors import MessageIdInvalid
+from pyrogram.errors import MessageIdInvalid, MessageNotModified
 from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls.__version__ import __version__ as pytgver
 
@@ -34,10 +34,16 @@ async def stats_global(client, message: Message, _):
 @languageCB
 async def home_stats(client, CallbackQuery, _):
     upl = stats_buttons(_, True if CallbackQuery.from_user.id in SUDOERS else False)
-    await CallbackQuery.edit_message_text(
-        text=_["gstats_2"].format(app.mention),
-        reply_markup=upl,
-    )
+    new_text = _["gstats_2"].format(app.mention)
+    try:
+        # Check if the message text is different before editing
+        if CallbackQuery.message.text != new_text:
+            await CallbackQuery.edit_message_text(
+                text=new_text,
+                reply_markup=upl,
+            )
+    except MessageNotModified:
+        pass  # Ignore if the message content is unchanged
 
 
 @app.on_callback_query(filters.regex("TopOverall") & ~BANNED_USERS)
@@ -45,13 +51,7 @@ async def home_stats(client, CallbackQuery, _):
 async def overall_stats(client, CallbackQuery, _):
     await CallbackQuery.answer()
     upl = back_stats_buttons(_)
-    try:
-        await CallbackQuery.answer()
-    except:
-        pass
-
-    await CallbackQuery.edit_message_text(_["gstats_1"].format(app.mention))
-
+    new_text = _["gstats_1"].format(app.mention)
     actual_served_chats = len(await get_served_chats())
     actual_served_users = len(await get_served_users())
     served_chats = actual_served_chats + 4909
@@ -71,11 +71,15 @@ async def overall_stats(client, CallbackQuery, _):
 
     med = InputMediaPhoto(media=config.STATS_IMG_URL, caption=text)
     try:
-        await CallbackQuery.edit_message_media(media=med, reply_markup=upl)
+        # Check if the caption is different before editing
+        if CallbackQuery.message.caption != text:
+            await CallbackQuery.edit_message_media(media=med, reply_markup=upl)
     except MessageIdInvalid:
         await CallbackQuery.message.reply_photo(
             photo=config.STATS_IMG_URL, caption=text, reply_markup=upl
         )
+    except MessageNotModified:
+        pass  # Ignore if the message content is unchanged
 
 
 @app.on_callback_query(filters.regex("bot_stats_sudo"))
@@ -84,13 +88,9 @@ async def bot_stats(client, CallbackQuery, _):
     if CallbackQuery.from_user.id not in SUDOERS:
         return await CallbackQuery.answer(_["gstats_4"], show_alert=True)
 
+    await CallbackQuery.answer()
     upl = back_stats_buttons(_)
-    try:
-        await CallbackQuery.answer()
-    except:
-        pass
-
-    await CallbackQuery.edit_message_text(_["gstats_1"].format(app.mention))
+    new_text = _["gstats_1"].format(app.mention)
 
     p_core = psutil.cpu_count(logical=False)
     t_core = psutil.cpu_count(logical=True)
@@ -98,10 +98,7 @@ async def bot_stats(client, CallbackQuery, _):
 
     try:
         cpu_freq = psutil.cpu_freq().current
-        if cpu_freq >= 1000:
-            cpu_freq = f"{round(cpu_freq / 1000, 2)}ɢʜᴢ"
-        else:
-            cpu_freq = f"{round(cpu_freq, 2)}ᴍʜᴢ"
+        cpu_freq = f"{round(cpu_freq / 1000, 2)}ɢʜᴢ" if cpu_freq >= 1000 else f"{round(cpu_freq, 2)}ᴍʜᴢ"
     except:
         cpu_freq = "ғᴀɪʟᴇᴅ ᴛᴏ ғᴇᴛᴄʜ"
 
@@ -145,8 +142,12 @@ async def bot_stats(client, CallbackQuery, _):
 
     med = InputMediaPhoto(media=config.STATS_IMG_URL, caption=text)
     try:
-        await CallbackQuery.edit_message_media(media=med, reply_markup=upl)
+        # Check if the caption is different before editing
+        if CallbackQuery.message.caption != text:
+            await CallbackQuery.edit_message_media(media=med, reply_markup=upl)
     except MessageIdInvalid:
         await CallbackQuery.message.reply_photo(
             photo=config.STATS_IMG_URL, caption=text, reply_markup=upl
         )
+    except MessageNotModified:
+        pass  # Ignore if the message content is unchanged
