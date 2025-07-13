@@ -4,6 +4,7 @@ from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import (
     ChatAdminRequired,
     InviteRequestSent,
+    ChatWriteForbidden,
     UserAlreadyParticipant,
     UserNotParticipant,
 )
@@ -25,6 +26,28 @@ from config import PLAYLIST_IMG_URL, SUPPORT_CHAT, adminlist
 from strings import get_string
 
 links = {}
+
+
+async def safe_reply(msg, text, markup=None, **kwargs):
+    try:
+        return await msg.reply_text(text, reply_markup=markup, **kwargs)
+    except ChatWriteForbidden:
+        pass
+    except Exception:
+        pass
+
+
+async def safe_reply_photo(msg, photo, caption, buttons=None):
+    try:
+        return await msg.reply_photo(
+            photo=photo,
+            caption=caption,
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+        )
+    except ChatWriteForbidden:
+        pass
+    except Exception:
+        pass
 
 
 def PlayWrapper(command):
