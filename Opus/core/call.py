@@ -44,7 +44,7 @@ from strings import get_string
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Changed to DEBUG for more detailed logs
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler("seek.log"),
@@ -168,6 +168,7 @@ class Call(PyTgCalls):
             assistant = await group_assistant(self, chat_id)
             # Determine output extension based on input file or mode
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if playing[0]["streamtype"] == "video" else ".mp3")
+            logger.debug(f"Chat {chat_id}: Speeding up stream with file_path: {file_path}, extension: {extension}, speed: {speed}")
             if str(speed) != "1.0":
                 base = os.path.basename(file_path)
                 chatdir = os.path.join(os.getcwd(), "playback", str(speed))
@@ -193,6 +194,9 @@ class Call(PyTgCalls):
                         "-filter:a", f"atempo={speed}",
                         "-y", out
                     ]
+                    if file_path.startswith(("http://", "https://")):
+                        ffmpeg_cmd.insert(2, "-headers")
+                        ffmpeg_cmd.insert(3, "User-Agent: Mozilla/5.0")
                     logger.debug(f"Chat {chat_id}: Running FFmpeg command for speed: {' '.join(ffmpeg_cmd)}")
                     proc = await asyncio.create_subprocess_exec(
                         *ffmpeg_cmd,
@@ -215,9 +219,13 @@ class Call(PyTgCalls):
                 "-i", out,
                 "-ss", str(played),
                 "-to", str(playing[0]["seconds"]),
-                "-c", "copy",
+                "-c:a", "copy",
+                "-c:v", "copy",
                 "-y", temp_file_path
             ]
+            if out.startswith(("http://", "https://")):
+                ffmpeg_cmd.insert(2, "-headers")
+                ffmpeg_cmd.insert(3, "User-Agent: Mozilla/5.0")
             logger.debug(f"Chat {chat_id}: Running FFmpeg command for seeking: {' '.join(ffmpeg_cmd)}")
             proc = await asyncio.create_subprocess_exec(
                 *ffmpeg_cmd,
@@ -229,6 +237,11 @@ class Call(PyTgCalls):
                 logger.error(f"Chat {chat_id}: FFmpeg seeking failed: {stderr.decode()}")
                 os.unlink(temp_file_path)
                 raise Exception(f"FFmpeg seeking failed: {stderr.decode()}")
+            # Validate temporary file
+            if not os.path.exists(temp_file_path) or os.path.getsize(temp_file_path) < 1024:
+                logger.error(f"Chat {chat_id}: Temporary file {temp_file_path} is missing or too small")
+                os.unlink(temp_file_path)
+                raise Exception("Temporary file is invalid or empty")
             dur = await loop.run_in_executor(None, check_duration, temp_file_path)
             dur = int(dur)
             duration = seconds_to_min(dur)
@@ -244,13 +257,20 @@ class Call(PyTgCalls):
                     AudioQuality.STUDIO,
                 )
             )
+            logger.debug(f"Chat {chat_id}: Created MediaStream with temp_file: {temp_file_path}, duration: {dur}")
             if str(db[chat_id][0]["file"]) == str(file_path):
                 await assistant.change_stream(chat_id, stream)
                 logger.info(f"Chat {chat_id}: Successfully changed stream with speed {speed} and seek to {played}")
             else:
                 os.unlink(temp_file_path)
                 raise AssistantErr("File mismatch during speed change")
-            os.unlink(temp_file_path)
+            # Schedule cleanup after streaming
+            async def cleanup_temp_file(file_path):
+                await asyncio.sleep(10)  # Wait for pytgcalls to start streaming
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
+                    logger.debug(f"Chat {chat_id}: Cleaned up temporary file: {file_path}")
+            asyncio.create_task(cleanup_temp_file(temp_file_path))
             if str(db[chat_id][0]["file"]) == str(file_path):
                 exis = (playing[0]).get("old_dur")
                 if not exis:
@@ -308,6 +328,7 @@ class Call(PyTgCalls):
             assistant = await group_assistant(self, chat_id)
             # Determine output extension based on input file or mode
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if mode == "video" else ".mp3")
+            logger.debug(f"Chat {chat_id}: Seeking stream with file_path: {file_path}, extension: {extension}, to_seek: {to_seek}, duration: {duration}")
             temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
             temp_file.close()
@@ -316,9 +337,13 @@ class Call(PyTgCalls):
                 "-i", file_path,
                 "-ss", str(to_seek),
                 "-to", str(duration),
-                "-c", "copy",
+                "-c:a", "copy",
+                "-c:v", "copy",
                 "-y", temp_file_path
             ]
+            if file_path.startswith(("http://", "https://")):
+                ffmpeg_cmd.insert(2, "-headers")
+                ffmpeg_cmd.insert(3, "User-Agent: Mozilla/5.0")
             logger.debug(f"Chat {chat_id}: Running FFmpeg command for seeking: {' '.join(ffmpeg_cmd)}")
             process = await asyncio.create_subprocess_exec(
                 *ffmpeg_cmd,
@@ -330,6 +355,14 @@ class Call(PyTgCalls):
                 logger.error(f"Chat {chat_id}: FFmpeg seeking failed: {stderr.decode()}")
                 os.unlink(temp_file_path)
                 raise Exception(f"FFmpeg seeking failed: {stderr.decode()}")
+            # Validate temporary file
+            if not os.path.exists(temp_file_path) or os.path.getsize(temp_file_path) < 1024:
+                logger.error(f"Chat {chat_id}: Temporary file {temp_file_path} is missing or too small")
+                os.unlink(temp_file_path)
+                raise Exception("Temporary file is invalid or empty")
+            dur = await loop.run_in_executor(None, check_duration, temp_file_path)
+            dur = int(dur)
+            duration = seconds_to_min(dur)
             stream = (
                 MediaStream(
                     temp_file_path,
@@ -342,9 +375,20 @@ class Call(PyTgCalls):
                     AudioQuality.STUDIO,
                 )
             )
+            logger.debug(f"Chat {chat_id}: Created MediaStream with temp_file: {temp_file_path}, duration: {dur}")
             await assistant.change_stream(chat_id, stream)
             logger.info(f"Chat {chat_id}: Successfully sought to {to_seek} using preprocessed stream")
-            os.unlink(temp_file_path)
+            # Schedule cleanup after streaming
+            async def cleanup_temp_file(file_path):
+                await asyncio.sleep(10)  # Wait for pytgcalls to start streaming
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
+                    logger.debug(f"Chat {chat_id}: Cleaned up temporary file: {file_path}")
+            asyncio.create_task(cleanup_temp_file(temp_file_path))
+            # Update db state
+            db[chat_id][0]["played"] = to_seek
+            db[chat_id][0]["dur"] = duration
+            db[chat_id][0]["seconds"] = dur
         except Exception as e:
             logger.error(f"Chat {chat_id}: Failed to seek stream: {str(e)}", exc_info=True)
             raise
@@ -355,7 +399,7 @@ class Call(PyTgCalls):
             config.LOGGER_ID,
             MediaStream(link),
         )
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
         await assistant.leave_group_call(config.LOGGER_ID)
 
     async def join_call(
@@ -666,6 +710,14 @@ class Call(PyTgCalls):
         @self.three.on_left()
         @self.four.on_left()
         @self.five.on_left()
+        async def stream_services_handler(_, chat_id: int):
+            await self.stop_stream(chat_id)
+
+        @self.one.on_stream_end()
+        @self.two.on_stream_end()
+        @self.three.on_stream_end()
+        @self.four.on_stream_end()
+        @self.five.on_stream_end()
         async def stream_end_handler(client, update: Update):
             if not isinstance(update, StreamAudioEnded):
                 return
