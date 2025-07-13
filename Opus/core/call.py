@@ -255,22 +255,22 @@ class Call(PyTgCalls):
         )
 
     async def seek_stream(self, chat_id, file_path, to_seek, duration, mode):
-        assistant = await group_assistant(self, chat_id)
-        stream = (
-            MediaStream(
-                file_path,
-                AudioQuality.STUDIO,
-                VideoQuality.SD_480p,
-                additional_ffmpeg_parameters=f"-ss {to_seek} -to {duration}",
-            )
-            if mode == "video"
-            else MediaStream(
-                file_path,
-                AudioQuality.STUDIO,
-                additional_ffmpeg_parameters=f"-ss {to_seek} -to {duration}",
-            )
+    assistant = await group_assistant(self, chat_id)
+    stream = (
+        MediaStream(
+            file_path,
+            AudioQuality.STUDIO,
+            VideoQuality.SD_480p,
+            # Removed additional_ffmpeg_parameters
         )
-        await assistant.change_stream(chat_id, stream)
+        if mode == "video"
+        else MediaStream(
+            file_path,
+            AudioQuality.STUDIO,
+            # Removed additional_ffmpeg_parameters
+        )
+    )
+    await assistant.change_stream(chat_id, stream)
 
     async def stream_call(self, link):
         assistant = await group_assistant(self, config.LOGGER_ID)
