@@ -2,7 +2,7 @@ import asyncio
 import os
 import re
 import json
-from typing import Union
+from typing import Tuple, Union
 import requests
 import random
 import yt_dlp
