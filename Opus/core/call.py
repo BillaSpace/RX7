@@ -167,7 +167,7 @@ class Call(PyTgCalls):
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if playing[0]["streamtype"] == "video" else ".mp3")
             logger.debug(f"Chat {chat_id}: Speeding up stream with file_path: {file_path}, extension: {extension}, speed: {speed}")
 
-            # Validate original file
+            # Validate input file
             if not os.path.exists(file_path):
                 logger.error(f"Chat {chat_id}: Input file {file_path} does not exist")
                 raise Exception(f"Input file {file_path} does not exist")
@@ -191,7 +191,8 @@ class Call(PyTgCalls):
                     elif str(speed) == "2.0":
                         vs = 0.5
                     else:
-                        vs = 1.0
+                        logger.error(f"Chat {chat_id}: Invalid speed value: {speed}")
+                        raise Exception(f"Invalid speed value: {speed}")
                     ffmpeg_cmd = [
                         "ffmpeg",
                         "-i", file_path,
@@ -245,6 +246,7 @@ class Call(PyTgCalls):
                     logger.error(f"Chat {chat_id}: Failed to change stream: {str(e)}", exc_info=True)
                     raise AssistantErr(f"Failed to change stream: {str(e)}")
             else:
+                logger.error(f"Chat {chat_id}: File mismatch - db file: {db[chat_id][0]['file']}, input file: {file_path}")
                 raise AssistantErr("File mismatch during speed change")
 
             # Schedule cleanup for non-original files
@@ -265,7 +267,7 @@ class Call(PyTgCalls):
                 db[chat_id][0]["dur"] = seconds_to_min(int(db[chat_id][0]["old_second"] / float(speed)))
                 db[chat_id][0]["seconds"] = int(db[chat_id][0]["old_second"] / float(speed))
                 db[chat_id][0]["speed_path"] = out if str(speed) != "1.0" else None
-                db[chat_id][0]["speed"] = speed
+                db[chat_id][0]["speed"] = float(speed)
                 logger.debug(f"Chat {chat_id}: Post-update db state: {db[chat_id][0]}")
         except Exception as e:
             logger.error(f"Chat {chat_id}: Failed to speed up stream: {str(e)}", exc_info=True)
@@ -323,6 +325,9 @@ class Call(PyTgCalls):
             if to_seek < 0 or duration <= to_seek:
                 logger.error(f"Chat {chat_id}: Invalid seek parameters - to_seek: {to_seek}, duration: {duration}")
                 raise Exception("Invalid seek parameters")
+            if mode not in ["video", "audio"]:
+                logger.error(f"Chat {chat_id}: Invalid mode: {mode}")
+                raise Exception(f"Invalid mode: {mode}")
 
             temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
@@ -358,6 +363,10 @@ class Call(PyTgCalls):
 
             dur = await loop.run_in_executor(None, check_duration, temp_file_path)
             dur = int(dur)
+            if dur <= 0:
+                logger.error(f"Chat {chat_id}: Invalid duration from temp file: {dur}")
+                os.unlink(temp_file_path)
+                raise Exception("Invalid duration from temp file")
             duration = seconds_to_min(dur)
             stream = (
                 MediaStream(
@@ -726,4 +735,4 @@ class Call(PyTgCalls):
                 return
             await self.change_stream(client, update.chat_id)
 
-Anony = Call()
+Anony = Call() 
