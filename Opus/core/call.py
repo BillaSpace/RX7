@@ -167,8 +167,11 @@ class Call(PyTgCalls):
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if playing[0]["streamtype"] == "video" else ".mp3")
             logger.debug(f"Chat {chat_id}: Speeding up stream with file_path: {file_path}, extension: {extension}, speed: {speed}")
 
-            # Use original file for speed 1.0, otherwise process with FFmpeg
+            # Validate original file for speed 1.0
             if str(speed) == "1.0":
+                if not os.path.exists(file_path):
+                    logger.error(f"Chat {chat_id}: Original file {file_path} does not exist for speed 1.0")
+                    raise Exception(f"Original file {file_path} does not exist")
                 out = file_path
             else:
                 base = os.path.basename(file_path)
@@ -260,17 +263,25 @@ class Call(PyTgCalls):
             )
             logger.debug(f"Chat {chat_id}: Created MediaStream with temp_file: {temp_file_path}, duration: {dur}")
 
-            # Verify file consistency before changing stream
+            # Log database state before update
+            logger.debug(f"Chat {chat_id}: Pre-update db state: {db[chat_id][0]}")
+
+            # Change stream with error handling
             if str(db[chat_id][0]["file"]) == str(file_path):
-                await assistant.change_stream(chat_id, stream)
-                logger.info(f"Chat {chat_id}: Successfully changed stream with speed {speed} and seek to {played}")
+                try:
+                    await assistant.change_stream(chat_id, stream)
+                    logger.info(f"Chat {chat_id}: Successfully changed stream with speed {speed} and seek to {played}")
+                except Exception as e:
+                    logger.error(f"Chat {chat_id}: Failed to change stream: {str(e)}", exc_info=True)
+                    os.unlink(temp_file_path)
+                    raise AssistantErr(f"Failed to change stream: {str(e)}")
             else:
                 os.unlink(temp_file_path)
                 raise AssistantErr("File mismatch during speed change")
 
             # Schedule cleanup
             async def cleanup_temp_file(file_path):
-                await asyncio.sleep(10)
+                await asyncio.sleep(20)  # Increased delay
                 if os.path.exists(file_path):
                     os.unlink(file_path)
                     logger.debug(f"Chat {chat_id}: Cleaned up temporary file: {file_path}")
@@ -287,6 +298,7 @@ class Call(PyTgCalls):
                 db[chat_id][0]["seconds"] = dur
                 db[chat_id][0]["speed_path"] = out if str(speed) != "1.0" else None
                 db[chat_id][0]["speed"] = speed
+                logger.debug(f"Chat {chat_id}: Post-update db state: {db[chat_id][0]}")
         except Exception as e:
             logger.error(f"Chat {chat_id}: Failed to speed up stream: {str(e)}", exc_info=True)
             raise
@@ -324,16 +336,23 @@ class Call(PyTgCalls):
                 link,
                 AudioQuality.STUDIO,
             )
-        await assistant.change_stream(
-            chat_id,
-            stream,
-        )
+        try:
+            await assistant.change_stream(chat_id, stream)
+        except Exception as e:
+            logger.error(f"Chat {chat_id}: Failed to skip stream: {str(e)}", exc_info=True)
+            raise AssistantErr(f"Failed to skip stream: {str(e)}")
 
     async def seek_stream(self, chat_id, file_path, to_seek, duration, mode):
         try:
             assistant = await group_assistant(self, chat_id)
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if mode == "video" else ".mp3")
             logger.debug(f"Chat {chat_id}: Seeking stream with file_path: {file_path}, extension: {extension}, to_seek: {to_seek}, duration: {duration}")
+
+            # Validate input file
+            if not os.path.exists(file_path):
+                logger.error(f"Chat {chat_id}: Input file {file_path} does not exist for seeking")
+                raise Exception(f"Input file {file_path} does not exist")
+
             temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
             temp_file.close()
@@ -382,31 +401,46 @@ class Call(PyTgCalls):
                 )
             )
             logger.debug(f"Chat {chat_id}: Created MediaStream with temp_file: {temp_file_path}, duration: {dur}")
-            await assistant.change_stream(chat_id, stream)
-            logger.info(f"Chat {chat_id}: Successfully sought to {to_seek} using preprocessed stream")
 
+            # Log database state before update
+            logger.debug(f"Chat {chat_id}: Pre-update db state: {db[chat_id][0]}")
+
+            try:
+                await assistant.change_stream(chat_id, stream)
+                logger.info(f"Chat {chat_id}: Successfully sought to {to_seek} using preprocessed stream")
+            except Exception as e:
+                logger.error(f"Chat {chat_id}: Failed to change stream for seek: {str(e)}", exc_info=True)
+                os.unlink(temp_file_path)
+                raise AssistantErr(f"Failed to change stream for seek: {str(e)}")
+
+            # Schedule cleanup
             async def cleanup_temp_file(file_path):
-                await asyncio.sleep(10)
+                await asyncio.sleep(20)  # Increased delay
                 if os.path.exists(file_path):
                     os.unlink(file_path)
                     logger.debug(f"Chat {chat_id}: Cleaned up temporary file: {file_path}")
             asyncio.create_task(cleanup_temp_file(temp_file_path))
 
+            # Update database
             db[chat_id][0]["played"] = to_seek
             db[chat_id][0]["dur"] = duration
             db[chat_id][0]["seconds"] = dur
+            logger.debug(f"Chat {chat_id}: Post-update db state: {db[chat_id][0]}")
         except Exception as e:
             logger.error(f"Chat {chat_id}: Failed to seek stream: {str(e)}", exc_info=True)
             raise
 
     async def stream_call(self, link):
         assistant = await group_assistant(self, config.LOGGER_ID)
-        await assistant.join_group_call(
-            config.LOGGER_ID,
-            MediaStream(link),
-        )
-        await asyncio.sleep(0.2)
-        await assistant.leave_group_call(config.LOGGER_ID)
+        try:
+            await assistant.join_group_call(
+                config.LOGGER_ID,
+                MediaStream(link),
+            )
+            await asyncio.sleep(0.2)
+            await assistant.leave_group_call(config.LOGGER_ID)
+        except Exception as e:
+            logger.error(f"Failed to stream call for logger: {str(e)}", exc_info=True)
 
     async def join_call(
         self,
@@ -634,7 +668,7 @@ class Call(PyTgCalls):
                     button = stream_markup(_, chat_id)
                     run = await app.send_photo(
                         chat_id=original_chat_id,
-                        photo=config.TELEGRAM_AUDIO_U
+                        photo=config.TELEGRAM_AUDIO_URL
                         if str(streamtype) == "audio"
                         else config.TELEGRAM_VIDEO_URL,
                         caption=_["stream_1"].format(
