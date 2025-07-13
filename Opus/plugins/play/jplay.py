@@ -12,6 +12,7 @@ import aiohttp
 import asyncio
 import logging
 import time
+import tempfile
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -32,39 +33,58 @@ FALLBACK_COOKIES_PATH = "cookies.txt"
 DOWNLOADS_DIR = "downloads/"
 
 async def ensure_cookies_file():
-    """Ensure cookies file exists, download from URL or fall back to local cookies.txt"""
+    """Ensure cookies file exists, only download if primary file is missing"""
+    if os.path.exists(COOKIES_PATH):
+        logger.info(f"Cookies file already exists: {COOKIES_PATH}")
+        return
+    
     # Create cookies/ directory if it doesn't exist
     os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
     
-    # Check if primary cookies file exists
-    if not os.path.exists(COOKIES_PATH):
-        url = "https://v0-mongo-db-api-setup.vercel.app/api/cookies.txt"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        content = await response.read()
-                        with open(COOKIES_PATH, 'wb') as f:
-                            f.write(content)
-                        logger.info(f"Successfully downloaded cookies file to {COOKIES_PATH}. Size: {len(content)} bytes")
+    # Attempt to download cookies file
+    url = "https://v0-mongo-db-api-setup.vercel.app/api/cookies.txt"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    content = await response.read()
+                    with open(COOKIES_PATH, 'wb') as f:
+                        f.write(content)
+                    logger.info(f"Successfully downloaded cookies file to {COOKIES_PATH}. Size: {len(content)} bytes")
+                else:
+                    logger.error(f"Failed to download cookies from {url}: HTTP {response.status}")
+                    # Fallback to cookies.txt in root folder
+                    if os.path.exists(FALLBACK_COOKIES_PATH):
+                        logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
                     else:
-                        logger.error(f"Failed to download cookies from {url}: HTTP {response.status}")
-                        # Fallback to cookies.txt in root folder
-                        if os.path.exists(FALLBACK_COOKIES_PATH):
-                            logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
-                            return
-                        else:
-                            logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
-        except Exception as e:
-            logger.error(f"Error downloading cookies from {url}: {e}")
-            # Fallback to cookies.txt in root folder
-            if os.path.exists(FALLBACK_COOKIES_PATH):
-                logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
-                return
-            else:
-                logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
-    else:
-        logger.info(f"Cookies file already exists: {COOKIES_PATH}")
+                        logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
+    except Exception as e:
+        logger.error(f"Error downloading cookies from {url}: {e}")
+        # Fallback to cookies.txt in root folder
+        if os.path.exists(FALLBACK_COOKIES_PATH):
+            logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
+        else:
+            logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
+
+async def download_thumbnail(url):
+    """Download a thumbnail image to a temporary file and return its path"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    content = await response.read()
+                    # Create a temporary file for the thumbnail
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+                        temp_file.write(content)
+                        temp_file_path = temp_file.name
+                    logger.info(f"Downloaded thumbnail to {temp_file_path}")
+                    return temp_file_path
+                else:
+                    logger.error(f"Failed to download thumbnail from {url}: HTTP {response.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"Error downloading thumbnail from {url}: {e}")
+        return None
 
 async def cleanup_downloads():
     """Clean up files in downloads/ folder older than 60 minutes"""
@@ -194,7 +214,7 @@ async def song_search(client, message: Message):
     
     try:
         if len(message.command) < 2:
-            return await message.reply_text("Please provide a song name to search")
+            return await message.reply_text("Please provide a song name to search & Download As Loseless 48hz 16bit High Quality Audio File Directly From Spotify Servers")
         
         query = " ".join(message.command[1:])
         msg = await message.reply_text(f"🔍 Searching for: {query}")
@@ -261,6 +281,11 @@ async def download_handler(client, callback_query):
                 await msg.edit_text("Failed to download song")
             return
         
+        # Download Spotify thumbnail
+        thumb_path = None
+        if track['album']['images']:
+            thumb_path = await download_thumbnail(track['album']['images'][0]['url'])
+        
         try:
             # Send audio to the original chat
             audio_message = await callback_query.message.reply_audio(
@@ -268,7 +293,7 @@ async def download_handler(client, callback_query):
                 title=track['name'],
                 duration=audio_info['duration'],
                 performer=app.name,
-                thumb=track['album']['images'][0]['url'] if track['album']['images'] else None,
+                thumb=thumb_path,
                 caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])}\nPowered By Space-X Alpha API"
             )
             
@@ -285,7 +310,7 @@ async def download_handler(client, callback_query):
                         title=track['name'],
                         duration=audio_info['duration'],
                         performer=app.name,
-                        thumb=track['album']['images'][0]['url'] if track['album']['images'] else None,
+                        thumb=thumb_path,
                         caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])}\n(Shared from {callback_query.message.chat.title or callback_query.message.chat.id})\nPowered By Space-X Alpha API"
                     )
                     logger.info(f"Sent audio to SONG_DUMP_ID: {SONG_DUMP_ID}")
@@ -320,6 +345,14 @@ async def download_handler(client, callback_query):
                 logger.info(f"Cleaned up file: {audio_info['filepath']}")
         except Exception as e:
             logger.error(f"Error cleaning up file {audio_info['filepath']}: {e}")
+        
+        # Clean up the thumbnail file
+        try:
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
+                logger.info(f"Cleaned up thumbnail: {thumb_path}")
+        except Exception as e:
+            logger.error(f"Error cleaning up thumbnail {thumb_path}: {e}")
         
     except Exception as e:
         logger.error(f"Download handler error: {e}")
