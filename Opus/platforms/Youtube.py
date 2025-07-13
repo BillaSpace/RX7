@@ -15,7 +15,7 @@ import aiohttp
 import config
 
 # Import API URLs from config
-API_URL = config.API_URL  # 
+API_URL1 = config.API_URL1  # 
 API_URL2 = config.API_URL2  # 
 
 def cookie_txt_file():
