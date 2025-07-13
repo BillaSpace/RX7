@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from Opus.misc import db
-from Opus.utils.database import get_active_chats, is_music_playing
+from Opus.utils.database import get_active_chats, is_music_playing, group_assistant
 from Opus.core.call import Anony
 
 # Configure logging
@@ -22,10 +22,12 @@ async def timer():
         for chat_id in active_chats:
             try:
                 if not await is_music_playing(chat_id):
+                    logger.debug(f"Chat {chat_id}: Music not playing, skipping")
                     continue
 
                 playing = db.get(chat_id)
                 if not playing:
+                    logger.debug(f"Chat {chat_id}: No playing data in db, skipping")
                     continue
 
                 duration = playing[0]["seconds"]
@@ -39,16 +41,20 @@ async def timer():
                         mins, secs = map(int, raw_played.strip().split(":"))
                         played = mins * 60 + secs
                     except ValueError:
+                        logger.error(f"Chat {chat_id}: Invalid played format: {raw_played}")
                         played = 0
                 elif isinstance(raw_played, str) and raw_played.isdigit():
                     played = int(raw_played)
                 else:
+                    logger.error(f"Chat {chat_id}: Unrecognized played format: {raw_played}")
                     played = 0
 
                 logger.debug(f"Chat {chat_id}: db state - played: {played}, duration: {duration}, file: {playing[0]['file']}")
 
                 if played >= duration:
-                    await Anony.change_stream(chat_id)
+                    assistant = await group_assistant(Anony, chat_id)
+                    await Anony.change_stream(assistant, chat_id)
+                    logger.info(f"Chat {chat_id}: Successfully processed stream change")
                 else:
                     db[chat_id][0]["played"] = played + 1
 
