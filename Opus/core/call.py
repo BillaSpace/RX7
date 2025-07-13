@@ -1,5 +1,8 @@
 import asyncio
 import os
+import tempfile
+import subprocess
+import logging
 from datetime import datetime, timedelta
 from typing import Union
 from pyrogram import Client
@@ -38,6 +41,17 @@ from Opus.utils.inline.play import stream_markup
 from Opus.utils.stream.autoclear import auto_clean
 from Opus.utils.thumbnails import get_thumb
 from strings import get_string
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("seek.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 autoend = {}
 counter = {}
