@@ -673,8 +673,6 @@ class Call(PyTgCalls):
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "stream"
 
- _
-
     async def ping(self):
         pings = []
         if config.STRING1:
