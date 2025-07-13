@@ -7,6 +7,7 @@ from Opus.misc import SUDOERS, db
 from Opus.utils import AdminRightsCheck
 from Opus.utils.decorators.language import languageCB
 from Opus.utils.inline import close_markup, speed_markup
+from Opus.utils.database import is_active_chat, is_nonadmin_chat  # Added is_active_chat import
 from config import BANNED_USERS, adminlist
 import logging
 
