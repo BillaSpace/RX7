@@ -9,7 +9,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("seek.log"),
+        logging.FileHandler("seeker_misc.log"),  # Separate log file to avoid clutter
         logging.StreamHandler()
     ]
 )
@@ -31,6 +31,7 @@ async def timer():
                     continue
 
                 duration = playing[0]["seconds"]
+                speed = playing[0].get("speed", 1.0)
 
                 # Safely convert "played" field to seconds
                 raw_played = playing[0]["played"]
@@ -49,14 +50,19 @@ async def timer():
                     logger.error(f"Chat {chat_id}: Unrecognized played format: {raw_played}")
                     played = 0
 
-                logger.debug(f"Chat {chat_id}: db state - played: {played}, duration: {duration}, file: {playing[0]['file']}")
+                # Adjust played time for speed
+                adjusted_duration = int(playing[0]["old_second"] / speed) if playing[0].get("old_second") else duration
+                logger.debug(f"Chat {chat_id}: db state - played: {played}, adjusted_duration: {adjusted_duration}, original_duration: {duration}, file: {playing[0]['file']}, speed: {speed}")
 
-                if played >= duration:
+                if played >= adjusted_duration:
                     assistant = await group_assistant(Anony, chat_id)
                     await Anony.change_stream(assistant, chat_id)
                     logger.info(f"Chat {chat_id}: Successfully processed stream change")
                 else:
-                    db[chat_id][0]["played"] = played + 1
+                    # Only update played in one timer to avoid conflicts
+                    if playing[0].get("seeker_updated", False):
+                        db[chat_id][0]["played"] = played + 1
+                        db[chat_id][0]["seeker_updated"] = False
 
             except Exception as e:
                 logger.error(f"Error processing chat {chat_id}: {str(e)}", exc_info=True)
