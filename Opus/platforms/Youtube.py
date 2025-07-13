@@ -12,11 +12,8 @@ from youtubesearchpython.__future__ import VideosSearch
 from Opus.utils.database import is_on_off
 from Opus.utils.formatters import time_to_seconds
 import aiohttp
-import config
-
-# Import API URLs from config
-API_URL1 = config.API_URL1  # 
-API_URL2 = config.API_URL2  # 
+from config import API_URL1, API_URL2
+ 
 
 def cookie_txt_file():
     cookie_dir = f"{os.getcwd()}/cookies"
@@ -36,7 +33,7 @@ async def download_song(link: str, download_mode: str = "audio"):
             return file_path
     
     # Try API_URL first (supports both audio and video)
-    song_url = f"{API_URL}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
+    song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode=audio"
     async with aiohttp.ClientSession() as session:
         for attempt in range(5):  # Reduced retries for faster fallback
             try:
@@ -73,7 +70,7 @@ async def download_song(link: str, download_mode: str = "audio"):
                                 f.write(chunk)
                         return file_path
             except Exception as e:
-                print(f"[FAIL API 1] {e}")
+                print(f"[API 1 failed falling back to 2] {e}")
                 # If audio download, try secondary API
                 if download_mode == "audio":
                     try:
