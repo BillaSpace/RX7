@@ -150,71 +150,104 @@ class Call(PyTgCalls):
             pass
 
     async def speedup_stream(self, chat_id: int, file_path, speed, playing):
-        assistant = await group_assistant(self, chat_id)
-        if str(speed) != "1.0":
-            base = os.path.basename(file_path)
-            chatdir = os.path.join(os.getcwd(), "playback", str(speed))
-            if not os.path.isdir(chatdir):
-                os.makedirs(chatdir)
-            out = os.path.join(chatdir, base)
-            if not os.path.isfile(out):
-                if str(speed) == "0.5":
-                    vs = 2.0
-                if str(speed) == "0.75":
-                    vs = 1.35
-                if str(speed) == "1.5":
-                    vs = 0.68
-                if str(speed) == "2.0":
-                    vs = 0.5
-                proc = await asyncio.create_subprocess_shell(
-                    cmd=(
-                        "ffmpeg "
-                        "-i "
-                        f"{file_path} "
-                        "-filter:v "
-                        f"setpts={vs}*PTS "
-                        "-filter:a "
-                        f"atempo={speed} "
-                        f"{out}"
-                    ),
-                    stdin=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+        try:
+            assistant = await group_assistant(self, chat_id)
+            if str(speed) != "1.0":
+                base = os.path.basename(file_path)
+                chatdir = os.path.join(os.getcwd(), "playback", str(speed))
+                if not os.path.isdir(chatdir):
+                    os.makedirs(chatdir)
+                out = os.path.join(chatdir, base)
+                if not os.path.isfile(out):
+                    if str(speed) == "0.5":
+                        vs = 2.0
+                    elif str(speed) == "0.75":
+                        vs = 1.35
+                    elif str(speed) == "1.5":
+                        vs = 0.68
+                    elif str(speed) == "2.0":
+                        vs = 0.5
+                    else:
+                        vs = 1.0  # Fallback for invalid speed
+                    # Run FFmpeg to adjust speed
+                    ffmpeg_cmd = [
+                        "ffmpeg",
+                        "-i", file_path,
+                        "-filter:v", f"setpts={vs}*PTS",
+                        "-filter:a", f"atempo={speed}",
+                        "-y", out
+                    ]
+                    logger.debug(f"Chat {chat_id}: Running FFmpeg command for speed: {' '.join(ffmpeg_cmd)}")
+                    proc = await asyncio.create_subprocess_exec(
+                        *ffmpeg_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        logger.error(f"Chat {chat_id}: FFmpeg speed adjustment failed: {stderr.decode()}")
+                        raise Exception(f"FFmpeg speed adjustment failed: {stderr.decode()}")
+            else:
+                out = file_path
+            # Preprocess for seeking
+            temp_file = tempfile.NamedTemporaryFile(suffix=".mp4" if playing[0]["streamtype"] == "video" else ".mp3", delete=False)
+            temp_file_path = temp_file.name
+            temp_file.close()
+            played, con_seconds = speed_converter(playing[0]["played"], speed)
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-i", out,
+                "-ss", str(played),
+                "-to", str(playing[0]["seconds"]),
+                "-c", "copy",
+                "-y", temp_file_path
+            ]
+            logger.debug(f"Chat {chat_id}: Running FFmpeg command for seeking: {' '.join(ffmpeg_cmd)}")
+            proc = await asyncio.create_subprocess_exec(
+                *ffmpeg_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                logger.error(f"Chat {chat_id}: FFmpeg seeking failed: {stderr.decode()}")
+                os.unlink(temp_file_path)
+                raise Exception(f"FFmpeg seeking failed: {stderr.decode()}")
+            dur = await loop.run_in_executor(None, check_duration, temp_file_path)
+            dur = int(dur)
+            duration = seconds_to_min(dur)
+            stream = (
+                MediaStream(
+                    temp_file_path,
+                    AudioQuality.STUDIO,
+                    VideoQuality.SD_480p,
                 )
-                await proc.communicate()
-        else:
-            out = file_path
-        dur = await loop.run_in_executor(None, check_duration, out)
-        dur = int(dur)
-        played, con_seconds = speed_converter(playing[0]["played"], speed)
-        duration = seconds_to_min(dur)
-        stream = (
-            MediaStream(
-                out,
-                AudioQuality.STUDIO,
-                VideoQuality.SD_480p,
-                additional_ffmpeg_parameters=f"-ss {played} -to {duration}",
+                if playing[0]["streamtype"] == "video"
+                else MediaStream(
+                    temp_file_path,
+                    AudioQuality.STUDIO,
+                )
             )
-            if playing[0]["streamtype"] == "video"
-            else MediaStream(
-                out,
-                AudioQuality.STUDIO,
-                additional_ffmpeg_parameters=f"-ss {played} -to {duration}",
-            )
-        )
-        if str(db[chat_id][0]["file"]) == str(file_path):
-            await assistant.change_stream(chat_id, stream)
-        else:
-            raise AssistantErr("Umm")
-        if str(db[chat_id][0]["file"]) == str(file_path):
-            exis = (playing[0]).get("old_dur")
-            if not exis:
-                db[chat_id][0]["old_dur"] = db[chat_id][0]["dur"]
-                db[chat_id][0]["old_second"] = db[chat_id][0]["seconds"]
-            db[chat_id][0]["played"] = con_seconds
-            db[chat_id][0]["dur"] = duration
-            db[chat_id][0]["seconds"] = dur
-            db[chat_id][0]["speed_path"] = out
-            db[chat_id][0]["speed"] = speed
+            if str(db[chat_id][0]["file"]) == str(file_path):
+                await assistant.change_stream(chat_id, stream)
+                logger.info(f"Chat {chat_id}: Successfully changed stream with speed {speed} and seek to {played}")
+            else:
+                os.unlink(temp_file_path)
+                raise AssistantErr("File mismatch during speed change")
+            os.unlink(temp_file_path)
+            if str(db[chat_id][0]["file"]) == str(file_path):
+                exis = (playing[0]).get("old_dur")
+                if not exis:
+                    db[chat_id][0]["old_dur"] = db[chat_id][0]["dur"]
+                    db[chat_id][0]["old_second"] = db[chat_id][0]["seconds"]
+                db[chat_id][0]["played"] = con_seconds
+                db[chat_id][0]["dur"] = duration
+                db[chat_id][0]["seconds"] = dur
+                db[chat_id][0]["speed_path"] = out
+                db[chat_id][0]["speed"] = speed
+        except Exception as e:
+            logger.error(f"Chat {chat_id}: Failed to speed up stream: {str(e)}", exc_info=True)
+            raise
 
     async def force_stop_stream(self, chat_id: int):
         assistant = await group_assistant(self, chat_id)
@@ -255,22 +288,48 @@ class Call(PyTgCalls):
         )
 
     async def seek_stream(self, chat_id, file_path, to_seek, duration, mode):
-    assistant = await group_assistant(self, chat_id)
-    stream = (
-        MediaStream(
-            file_path,
-            AudioQuality.STUDIO,
-            VideoQuality.SD_480p,
-            # Removed additional_ffmpeg_parameters
-        )
-        if mode == "video"
-        else MediaStream(
-            file_path,
-            AudioQuality.STUDIO,
-            # Removed additional_ffmpeg_parameters
-        )
-    )
-    await assistant.change_stream(chat_id, stream)
+        try:
+            assistant = await group_assistant(self, chat_id)
+            temp_file = tempfile.NamedTemporaryFile(suffix=".mp4" if mode == "video" else ".mp3", delete=False)
+            temp_file_path = temp_file.name
+            temp_file.close()
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-i", file_path,
+                "-ss", str(to_seek),
+                "-to", str(duration),
+                "-c", "copy",
+                "-y", temp_file_path
+            ]
+            logger.debug(f"Chat {chat_id}: Running FFmpeg command for seeking: {' '.join(ffmpeg_cmd)}")
+            process = await asyncio.create_subprocess_exec(
+                *ffmpeg_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                logger.error(f"Chat {chat_id}: FFmpeg seeking failed: {stderr.decode()}")
+                os.unlink(temp_file_path)
+                raise Exception(f"FFmpeg seeking failed: {stderr.decode()}")
+            stream = (
+                MediaStream(
+                    temp_file_path,
+                    AudioQuality.STUDIO,
+                    VideoQuality.SD_480p,
+                )
+                if mode == "video"
+                else MediaStream(
+                    temp_file_path,
+                    AudioQuality.STUDIO,
+                )
+            )
+            await assistant.change_stream(chat_id, stream)
+            logger.info(f"Chat {chat_id}: Successfully sought to {to_seek} using preprocessed stream")
+            os.unlink(temp_file_path)
+        except Exception as e:
+            logger.error(f"Chat {chat_id}: Failed to seek stream: {str(e)}", exc_info=True)
+            raise
 
     async def stream_call(self, link):
         assistant = await group_assistant(self, config.LOGGER_ID)
@@ -604,4 +663,3 @@ class Call(PyTgCalls):
 
 
 Anony = Call()
-        
