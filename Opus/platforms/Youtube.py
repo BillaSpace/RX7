@@ -32,23 +32,23 @@ async def download_song(link: str, download_mode: str = "audio"):
         if os.path.exists(file_path):
             return file_path
     
-    # Try API_URL first (supports both audio and video)
+    # Try API_URL1
     song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode=audio"
     async with aiohttp.ClientSession() as session:
-        for attempt in range(5):  # Reduced retries for faster fallback
+        for attempt in range(3):
             try:
-                async with session.get(song_url, timeout=10) as response:
+                async with session.get(song_url, timeout=30) as response:
                     if response.status != 200:
-                        raise Exception(f"API request failed with status code {response.status}")
+                        raise Exception(f"API 1 request failed with status {response.status}")
                     
                     data = await response.json()
                     if data.get("status") != 200 or data.get("successful") != "success":
-                        raise Exception(f"API error: {data.get('message', 'Unknown error')}")
+                        raise Exception(f"API 1 error: {data.get('message', 'Unknown error')}")
                     
                     download_url = data.get("data", {}).get("url")
                     filename = data.get("data", {}).get("filename")
                     if not download_url or not filename:
-                        raise Exception("API response missing download URL or filename")
+                        raise Exception("API 1 response missing download URL or filename")
                     
                     # Sanitize filename
                     safe_filename = re.sub(r'[^\w\s.-]', '', filename).replace(' ', '_')
@@ -61,7 +61,9 @@ async def download_song(link: str, download_mode: str = "audio"):
                     os.makedirs(download_folder, exist_ok=True)
                     file_path = os.path.join(download_folder, safe_filename)
 
-                    async with session.get(download_url, timeout=30) as file_response:
+                    async with session.get(download_url, timeout=60) as file_response:
+                        if file_response.status != 200:
+                            raise Exception(f"File download failed with status {file_response.status}")
                         with open(file_path, 'wb') as f:
                             while True:
                                 chunk = await file_response.content.read(8192)
@@ -70,34 +72,38 @@ async def download_song(link: str, download_mode: str = "audio"):
                                 f.write(chunk)
                         return file_path
             except Exception as e:
-                print(f"[API 1 failed falling back to 2] {e}")
-                # If audio download, try secondary API
-                if download_mode == "audio":
-                    try:
-                        song_url2 = f"{API_URL2}?direct&id={video_id}"
-                        async with session.get(song_url2, timeout=10) as response2:
-                            if response2.status != 200:
-                                raise Exception(f"Secondary API request failed with status code {response2.status}")
-                            
-                            file_extension = "mp3"
-                            file_name = f"{video_id}.{file_extension}"
-                            os.makedirs(download_folder, exist_ok=True)
-                            file_path = os.path.join(download_folder, file_name)
+                print(f"[API 1 failed, attempt {attempt + 1}/3] {e}")
+                await asyncio.sleep(1)
+        
+        # Try API_URL2 for audio
+        if download_mode == "audio":
+            try:
+                song_url2 = f"{API_URL2}?direct&id={video_id}"
+                async with session.get(song_url2, timeout=30) as response2:
+                    if response2.status != 200:
+                        raise Exception(f"API 2 request failed with status {response2.status}")
+                    
+                    download_url = await response2.text()
+                    if not download_url.startswith("http"):
+                        raise Exception("API 2 did not return a valid download URL")
+                    
+                    file_extension = "mp3"
+                    file_name = f"{video_id}.{file_extension}"
+                    os.makedirs(download_folder, exist_ok=True)
+                    file_path = os.path.join(download_folder, file_name)
 
-                            async with session.get(await response2.text(), timeout=30) as file_response:
-                                with open(file_path, 'wb') as f:
-                                    while True:
-                                        chunk = await file_response.content.read(8192)
-                                        if not chunk:
-                                            break
-                                        f.write(chunk)
-                                return file_path
-                    except Exception as e2:
-                        print(f"[FAIL API 2] {e2}")
-                break  # Exit loop to fallback to yt-dlp
-            await asyncio.sleep(2)  # Reduced delay for faster retries
-        else:
-            print("⏱️ Max retries reached for API 1")
+                    async with session.get(download_url, timeout=15) as file_response:
+                        if file_response.status != 200:
+                            raise Exception(f"File download failed with status {file_response.status}")
+                        with open(file_path, 'wb') as f:
+                            while True:
+                                chunk = await file_response.content.read(8192)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                        return file_path
+            except Exception as e:
+                print(f"[API 2 failed] {e}")
     
     return None
 
