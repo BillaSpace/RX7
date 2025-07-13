@@ -210,12 +210,11 @@ async def download_song(_, message: Message):
 
         # Prepare caption
         cap = (
-            f"**{title}**\n"
-            f"➤ Performer: Recreation Music\n"
-            f"➤ Artist: Unknown\n"
-            f"➤ Channel: {channel}\n"
-            f"➤ Link: {yt_url}\n"
-            f"➤ Views: {views}\n\n"
+            f"Title :(title){yt_url}\n"
+            f"Performer: Recreation Music\n"
+            f"Artist: Unknown\n"
+            f"Channel: {channel}\n"
+            f"Views: {views}\n\n"
             f"Co-powered by: 🌌 Space-X Ashlyn API\n"
             f"Requested by: {message.from_user.mention}"
         )
