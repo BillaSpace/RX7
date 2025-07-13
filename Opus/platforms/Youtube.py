@@ -21,46 +21,34 @@ def cookie_txt_file():
     cookie_file = os.path.join(cookie_dir, random.choice(cookies_files))
     return cookie_file
 
-
-async def download_song(link: str, download_mode: str = "audio"):
+async def download_song(link: str, download_mode: str = "audio") -> Tuple[Union[str, None], str]:
     video_id = link.split('v=')[-1].split('&')[0]
     download_folder = "downloads"
-    
-    # Check if file already exists
-    for ext in ["mp3", "m4a", "webm"]:
-        file_path = f"{download_folder}/{video_id}.{ext}"
-        if os.path.exists(file_path):
-            return file_path
-    
-    # Try API_URL1
-    song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode=audio"
+    file_extension = "mp3" if download_mode == "audio" else "mp4"
+    file_path = os.path.join(download_folder, f"{video_id}.{file_extension}")
+
+    if os.path.exists(file_path):
+        return file_path, "File already exists"
+
+    os.makedirs(download_folder, exist_ok=True)
+
     async with aiohttp.ClientSession() as session:
+        # Try API 1
+        song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
         for attempt in range(3):
             try:
                 async with session.get(song_url, timeout=30) as response:
                     if response.status != 200:
                         raise Exception(f"API 1 request failed with status {response.status}")
-                    
                     data = await response.json()
                     if data.get("status") != 200 or data.get("successful") != "success":
                         raise Exception(f"API 1 error: {data.get('message', 'Unknown error')}")
-                    
                     download_url = data.get("data", {}).get("url")
                     filename = data.get("data", {}).get("filename")
                     if not download_url or not filename:
                         raise Exception("API 1 response missing download URL or filename")
-                    
-                    # Sanitize filename
-                    safe_filename = re.sub(r'[^\w\s.-]', '', filename).replace(' ', '_')
-                    file_extension = "mp3" if download_mode == "audio" else "mp4"
-                    if not safe_filename.lower().endswith(f".{file_extension}"):
-                        safe_filename = f"{video_id}.{file_extension}"
-                    else:
-                        safe_filename = f"{video_id}_{safe_filename}"
-                    
-                    os.makedirs(download_folder, exist_ok=True)
+                    safe_filename = f"{video_id}.{file_extension}"
                     file_path = os.path.join(download_folder, safe_filename)
-
                     async with session.get(download_url, timeout=60) as file_response:
                         if file_response.status != 200:
                             raise Exception(f"File download failed with status {file_response.status}")
@@ -70,28 +58,22 @@ async def download_song(link: str, download_mode: str = "audio"):
                                 if not chunk:
                                     break
                                 f.write(chunk)
-                        return file_path
+                        return file_path, "Downloaded via API 1"
             except Exception as e:
                 print(f"[API 1 failed, attempt {attempt + 1}/3] {e}")
                 await asyncio.sleep(1)
-        
-        # Try API_URL2 for audio
+
+        # Try API 2 (audio only)
         if download_mode == "audio":
+            song_url2 = f"{API_URL2}?direct&id={video_id}"
             try:
-                song_url2 = f"{API_URL2}?direct&id={video_id}"
                 async with session.get(song_url2, timeout=30) as response2:
                     if response2.status != 200:
                         raise Exception(f"API 2 request failed with status {response2.status}")
-                    
                     download_url = await response2.text()
                     if not download_url.startswith("http"):
                         raise Exception("API 2 did not return a valid download URL")
-                    
-                    file_extension = "mp3"
-                    file_name = f"{video_id}.{file_extension}"
-                    os.makedirs(download_folder, exist_ok=True)
-                    file_path = os.path.join(download_folder, file_name)
-
+                    file_path = os.path.join(download_folder, f"{video_id}.mp3")
                     async with session.get(download_url, timeout=15) as file_response:
                         if file_response.status != 200:
                             raise Exception(f"File download failed with status {file_response.status}")
@@ -101,11 +83,11 @@ async def download_song(link: str, download_mode: str = "audio"):
                                 if not chunk:
                                     break
                                 f.write(chunk)
-                        return file_path
+                        return file_path, "Downloaded via API 2"
             except Exception as e:
                 print(f"[API 2 failed] {e}")
-    
-    return None
+
+    return None, "All API attempts failed"
 
 
 async def check_file_size(link):
