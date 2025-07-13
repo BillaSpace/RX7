@@ -167,11 +167,13 @@ class Call(PyTgCalls):
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if playing[0]["streamtype"] == "video" else ".mp3")
             logger.debug(f"Chat {chat_id}: Speeding up stream with file_path: {file_path}, extension: {extension}, speed: {speed}")
 
-            # Validate original file for speed 1.0
+            # Validate original file
+            if not os.path.exists(file_path):
+                logger.error(f"Chat {chat_id}: Input file {file_path} does not exist")
+                raise Exception(f"Input file {file_path} does not exist")
+
+            # Use original file for speed 1.0, otherwise process with FFmpeg
             if str(speed) == "1.0":
-                if not os.path.exists(file_path):
-                    logger.error(f"Chat {chat_id}: Original file {file_path} does not exist for speed 1.0")
-                    raise Exception(f"Original file {file_path} does not exist")
                 out = file_path
             else:
                 base = os.path.basename(file_path)
@@ -211,57 +213,25 @@ class Call(PyTgCalls):
                         logger.error(f"Chat {chat_id}: FFmpeg speed adjustment failed: {stderr.decode()}")
                         raise Exception(f"FFmpeg speed adjustment failed: {stderr.decode()}")
 
-            # Preprocess for seeking
-            temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
-            temp_file_path = temp_file.name
-            temp_file.close()
-            played, con_seconds = speed_converter(playing[0]["played"], speed)
-            ffmpeg_cmd = [
-                "ffmpeg",
-                "-i", out,
-                "-ss", str(played),
-                "-to", str(playing[0]["seconds"]),
-                "-c:a", "copy",
-                "-c:v", "copy",
-                "-y", temp_file_path
-            ]
-            if out.startswith(("http://", "https://")):
-                ffmpeg_cmd.insert(2, "-headers")
-                ffmpeg_cmd.insert(3, "User-Agent: Mozilla/5.0")
-            logger.debug(f"Chat {chat_id}: Running FFmpeg command for seeking: {' '.join(ffmpeg_cmd)}")
-            proc = await asyncio.create_subprocess_exec(
-                *ffmpeg_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.error(f"Chat {chat_id}: FFmpeg seeking failed: {stderr.decode()}")
-                os.unlink(temp_file_path)
-                raise Exception(f"FFmpeg seeking failed: {stderr.decode()}")
+            # Validate output file
+            if not os.path.exists(out) or os.path.getsize(out) < 1024:
+                logger.error(f"Chat {chat_id}: Output file {out} is missing or too small")
+                raise Exception("Output file is invalid or empty")
 
-            # Validate temporary file
-            if not os.path.exists(temp_file_path) or os.path.getsize(temp_file_path) < 1024:
-                logger.error(f"Chat {chat_id}: Temporary file {temp_file_path} is missing or too small")
-                os.unlink(temp_file_path)
-                raise Exception("Temporary file is invalid or empty")
-
-            dur = await loop.run_in_executor(None, check_duration, temp_file_path)
-            dur = int(dur)
-            duration = seconds_to_min(dur)
+            # Create MediaStream
             stream = (
                 MediaStream(
-                    temp_file_path,
+                    out,
                     AudioQuality.STUDIO,
                     VideoQuality.SD_480p,
                 )
                 if playing[0]["streamtype"] == "video"
                 else MediaStream(
-                    temp_file_path,
+                    out,
                     AudioQuality.STUDIO,
                 )
             )
-            logger.debug(f"Chat {chat_id}: Created MediaStream with temp_file: {temp_file_path}, duration: {dur}")
+            logger.debug(f"Chat {chat_id}: Created MediaStream with file: {out}")
 
             # Log database state before update
             logger.debug(f"Chat {chat_id}: Pre-update db state: {db[chat_id][0]}")
@@ -270,22 +240,21 @@ class Call(PyTgCalls):
             if str(db[chat_id][0]["file"]) == str(file_path):
                 try:
                     await assistant.change_stream(chat_id, stream)
-                    logger.info(f"Chat {chat_id}: Successfully changed stream with speed {speed} and seek to {played}")
+                    logger.info(f"Chat {chat_id}: Successfully changed stream with speed {speed}")
                 except Exception as e:
                     logger.error(f"Chat {chat_id}: Failed to change stream: {str(e)}", exc_info=True)
-                    os.unlink(temp_file_path)
                     raise AssistantErr(f"Failed to change stream: {str(e)}")
             else:
-                os.unlink(temp_file_path)
                 raise AssistantErr("File mismatch during speed change")
 
-            # Schedule cleanup
-            async def cleanup_temp_file(file_path):
-                await asyncio.sleep(20)  # Increased delay
-                if os.path.exists(file_path):
-                    os.unlink(file_path)
-                    logger.debug(f"Chat {chat_id}: Cleaned up temporary file: {file_path}")
-            asyncio.create_task(cleanup_temp_file(temp_file_path))
+            # Schedule cleanup for non-original files
+            if str(speed) != "1.0":
+                async def cleanup_temp_file(file_path):
+                    await asyncio.sleep(20)  # Increased delay
+                    if os.path.exists(file_path):
+                        os.unlink(file_path)
+                        logger.debug(f"Chat {chat_id}: Cleaned up temporary file: {file_path}")
+                asyncio.create_task(cleanup_temp_file(out))
 
             # Update database
             if str(db[chat_id][0]["file"]) == str(file_path):
@@ -293,9 +262,8 @@ class Call(PyTgCalls):
                 if not exis:
                     db[chat_id][0]["old_dur"] = db[chat_id][0]["dur"]
                     db[chat_id][0]["old_second"] = db[chat_id][0]["seconds"]
-                db[chat_id][0]["played"] = con_seconds
-                db[chat_id][0]["dur"] = duration
-                db[chat_id][0]["seconds"] = dur
+                db[chat_id][0]["dur"] = seconds_to_min(int(db[chat_id][0]["old_second"] / float(speed)))
+                db[chat_id][0]["seconds"] = int(db[chat_id][0]["old_second"] / float(speed))
                 db[chat_id][0]["speed_path"] = out if str(speed) != "1.0" else None
                 db[chat_id][0]["speed"] = speed
                 logger.debug(f"Chat {chat_id}: Post-update db state: {db[chat_id][0]}")
@@ -348,10 +316,13 @@ class Call(PyTgCalls):
             extension = os.path.splitext(file_path)[1].lower() or (".mp4" if mode == "video" else ".mp3")
             logger.debug(f"Chat {chat_id}: Seeking stream with file_path: {file_path}, extension: {extension}, to_seek: {to_seek}, duration: {duration}")
 
-            # Validate input file
+            # Validate input parameters
             if not os.path.exists(file_path):
                 logger.error(f"Chat {chat_id}: Input file {file_path} does not exist for seeking")
                 raise Exception(f"Input file {file_path} does not exist")
+            if to_seek < 0 or duration <= to_seek:
+                logger.error(f"Chat {chat_id}: Invalid seek parameters - to_seek: {to_seek}, duration: {duration}")
+                raise Exception("Invalid seek parameters")
 
             temp_file = tempfile.NamedTemporaryFile(suffix=extension, delete=False)
             temp_file_path = temp_file.name
@@ -407,7 +378,7 @@ class Call(PyTgCalls):
 
             try:
                 await assistant.change_stream(chat_id, stream)
-                logger.info(f"Chat {chat_id}: Successfully sought to {to_seek} using preprocessed stream")
+                logger.info(f"Chat {chat_id}: Successfully sought to {to_seek}")
             except Exception as e:
                 logger.error(f"Chat {chat_id}: Failed to change stream for seek: {str(e)}", exc_info=True)
                 os.unlink(temp_file_path)
@@ -460,17 +431,9 @@ class Call(PyTgCalls):
                 VideoQuality.SD_480p,
             )
         else:
-            stream = (
-                MediaStream(
-                    link,
-                    AudioQuality.STUDIO,
-                    VideoQuality.SD_480p,
-                )
-                if video
-                else MediaStream(
-                    link,
-                    AudioQuality.STUDIO,
-                )
+            stream = MediaStream(
+                link,
+                AudioQuality.STUDIO,
             )
         try:
             await assistant.join_group_call(
@@ -664,7 +627,7 @@ class Call(PyTgCalls):
                         original_chat_id,
                         text=_["call_6"],
                     )
-                if videoid == "telegram":
+                 if videoid == "telegram":
                     button = stream_markup(_, chat_id)
                     run = await app.send_photo(
                         chat_id=original_chat_id,
