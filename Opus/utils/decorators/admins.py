@@ -58,22 +58,22 @@ def AdminRightsCheck(mystic):
             except ChatWriteForbidden:
                 return  # Exit gracefully
 
-        if message.command[0][0] == "c":
+        # Initialize chat_id to message.chat.id by default
+        chat_id = message.chat.id
+        if message.command and message.command[0][0] == "c":
             chat_id = await get_cmode(message.chat.id)
             if chat_id is None:
                 try:
                     return await message.reply_text(_["setting_7"])
                 except ChatWriteForbidden:
                     return
+            try:
+                await app.get_chat(chat_id)
+            except:
                 try:
-                    await app.get_chat(chat_id)
-                except:
-                    try:
-                        return await message.reply_text(_["cplay_4"])
-                    except ChatWriteForbidden:
-                        return
-            else:
-                chat_id = message.chat.id
+                    return await message.reply_text(_["cplay_4"])
+                except ChatWriteForbidden:
+                    return
 
         if not await is_active_chat(chat_id):
             try:
