@@ -1,49 +1,49 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.raw import functions, types
-from typing import Union, List
-import asyncio
 from datetime import datetime
+import asyncio
+from typing import Dict, Set, Union, List
+from Opus import app  # Your main app instance
 
-from Opus import app
-
-# Voice Chat Tracking System
 class VCTracker:
     def __init__(self):
-        self.infovc_enabled = True
-        self.active_calls = {}  # {chat_id: {"call": GroupCall, "participants": {user_id: join_time}}}
-        self.update_interval = 1  # seconds between updates
+        self.active_calls: Dict[int, Dict[int, datetime]] = {}
+        self.update_interval = 20
+        self.running = False
+        self.tracking_enabled = True
 
     async def start(self):
-        """Start the background update task"""
-        asyncio.create_task(self._update_participants_loop())
+        if not self.running:
+            self.running = True
+            asyncio.create_task(self._tracker_loop())
 
-    async def _update_participants_loop(self):
-        """Background task to regularly update participant list"""
-        while True:
+    async def stop(self):
+        self.running = False
+
+    async def _tracker_loop(self):
+        while self.running:
             try:
-                if self.infovc_enabled:
-                    await self._update_all_active_calls()
-                await asyncio.sleep(self.update_interval)
+                await self._update_all_calls()
             except Exception as e:
-                print(f"Error in update loop: {e}")
-                await asyncio.sleep(1)
+                print(f"Tracker error: {e}")
+            await asyncio.sleep(self.update_interval)
 
-    async def _update_all_active_calls(self):
-        """Update participant lists for all active calls"""
+    async def _update_all_calls(self):
         for chat_id in list(self.active_calls.keys()):
             try:
                 await self._update_call_participants(chat_id)
             except Exception as e:
-                print(f"Error updating call for chat {chat_id}: {e}")
+                print(f"Error updating call {chat_id}: {e}")
 
     async def _update_call_participants(self, chat_id: int):
-        """Get current participants using raw API"""
-        if chat_id not in self.active_calls:
-            return
-
-        call = self.active_calls[chat_id]["call"]
         try:
+            call = await self._get_group_call(chat_id)
+            if not call:
+                if chat_id in self.active_calls:
+                    del self.active_calls[chat_id]
+                return
+
             participants = await app.send(
                 functions.phone.GetGroupParticipants(
                     call=types.InputGroupCall(
@@ -57,137 +57,131 @@ class VCTracker:
                 )
             )
 
-            current_participants = set()
-            for participant in participants.participants:
-                user_id = participant.peer.user_id
-                current_participants.add(user_id)
-                
-                # Add new participants
-                if user_id not in self.active_calls[chat_id]["participants"]:
-                    self.active_calls[chat_id]["participants"][user_id] = datetime.now()
-                    await self._notify_join(chat_id, user_id)
-
-            # Remove left participants
-            for user_id in list(self.active_calls[chat_id]["participants"].keys()):
-                if user_id not in current_participants:
-                    join_time = self.active_calls[chat_id]["participants"].pop(user_id)
-                    await self._notify_leave(chat_id, user_id, join_time)
+            current_participants = {p.peer.user_id for p in participants.participants}
+            await self._process_participant_changes(chat_id, current_participants)
 
         except Exception as e:
             print(f"Error getting participants for chat {chat_id}: {e}")
 
+    async def _get_group_call(self, chat_id: int):
+        try:
+            full_chat = await app.send(
+                functions.messages.GetFullChat(chat_id=chat_id)
+            if hasattr(full_chat.full_chat, 'call'):
+                return full_chat.full_chat.call
+            return None
+        except Exception as e:
+            print(f"Error getting call for chat {chat_id}: {e}")
+            return None
+
+    async def _process_participant_changes(self, chat_id: int, current_participants: Set[int]):
+        if chat_id not in self.active_calls:
+            self.active_calls[chat_id] = {}
+
+        for user_id in current_participants:
+            if user_id not in self.active_calls[chat_id]:
+                self.active_calls[chat_id][user_id] = datetime.now()
+                await self._notify_join(chat_id, user_id)
+
+        for user_id in list(self.active_calls[chat_id].keys()):
+            if user_id not in current_participants:
+                join_time = self.active_calls[chat_id].pop(user_id)
+                await self._notify_leave(chat_id, user_id, join_time)
+
     async def _notify_join(self, chat_id: int, user_id: int):
-        """Notify when a user joins"""
         try:
             user = await app.get_users(user_id)
-            text = (
-                f"#JoinVoiceChat\n"
-                f"Name: {user.mention}\n"
-                f"ID: {user.id}\n"
-                f"Action: Joined voice chat"
+            await app.send_message(
+                chat_id,
+                f"🎤 {user.mention} joined voice chat"
             )
-            await app.send_message(chat_id, text)
         except Exception as e:
             print(f"Error notifying join: {e}")
 
     async def _notify_leave(self, chat_id: int, user_id: int, join_time: datetime):
-        """Notify when a user leaves"""
         try:
             user = await app.get_users(user_id)
             duration = datetime.now() - join_time
             hours, remainder = divmod(duration.seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
-            text = (
-                f"#LeaveVoiceChat\n"
-                f"Name: {user.mention}\n"
-                f"ID: {user.id}\n"
-                f"Action: Left voice chat\n"
-                f"Duration: {hours}h {minutes}m {seconds}s"
+            await app.send_message(
+                chat_id,
+                f"🚪 {user.mention} left after {hours}h {minutes}m {seconds}s"
             )
-            await app.send_message(chat_id, text)
         except Exception as e:
             print(f"Error notifying leave: {e}")
 
+    async def get_participants_text(self, chat_id: int) -> str:
+        participants = self.active_calls.get(chat_id, {})
+        if not participants:
+            return "No active participants in voice chat."
+        
+        text = "**🎤 Current Participants:**\n\n"
+        for user_id, join_time in participants.items():
+            try:
+                user = await app.get_users(user_id)
+                duration = datetime.now() - join_time
+                hours, remainder = divmod(duration.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                text += f"• {user.mention} - {hours}h {minutes}m {seconds}s\n"
+            except:
+                text += f"• Unknown User (ID: {user_id})\n"
+        return text
+
 # Initialize tracker
-vc_tracker = VCTracker()
-asyncio.create_task(vc_tracker.start())
+tracker = VCTracker()
 
-# Command decorator
-def command(commands: Union[str, List[str]]):
-    return filters.command(commands, prefixes=["/"])
+# Command filters
+def command(cmd: Union[str, List[str]]):
+    return filters.command(cmd, prefixes=["/", "!"])
 
-# Command to toggle /infovc on/off
-@app.on_message(command(["infovc"]))
-async def toggle_infovc(_, message: Message):
+@app.on_message(command(["vctrack", "vcmode"]))
+async def toggle_tracking(_, message: Message):
     if len(message.command) > 1:
-        state = message.command[1].lower()
-        if state == "on":
-            vc_tracker.infovc_enabled = True
-            await message.reply("Voice chat participant tracking is now enabled.")
-        elif state == "off":
-            vc_tracker.infovc_enabled = False
-            await message.reply("Voice chat participant tracking is now disabled.")
+        arg = message.command[1].lower()
+        if arg == "on":
+            tracker.tracking_enabled = True
+            await message.reply("✅ Voice chat tracking enabled")
+        elif arg == "off":
+            tracker.tracking_enabled = False
+            await message.reply("❌ Voice chat tracking disabled")
         else:
-            await message.reply("Usage: /infovc on or /infovc off")
+            await message.reply("Usage: /vctrack [on|off]")
     else:
-        await message.reply("Usage: /infovc on or /infovc off")
+        status = "enabled" if tracker.tracking_enabled else "disabled"
+        await message.reply(f"Tracking is {status}\nUsage: /vctrack [on|off]")
 
-# Command to show current VC participants
 @app.on_message(command(["vclist", "vcusers"]))
-async def show_vc_participants(_, message: Message):
-    if not vc_tracker.infovc_enabled:
-        await message.reply("Voice chat tracking is currently disabled. Enable with /infovc on")
+async def show_participants(_, message: Message):
+    if not tracker.tracking_enabled:
+        await message.reply("Tracking disabled. Enable with /vctrack on")
         return
-
-    chat_id = message.chat.id
-    if chat_id not in vc_tracker.active_calls or not vc_tracker.active_calls[chat_id]["participants"]:
-        await message.reply("No active voice chat or participants.")
-        return
-
-    participants = vc_tracker.active_calls[chat_id]["participants"]
-    text = "**Current Voice Chat Participants:**\n\n"
     
-    for user_id, join_time in participants.items():
-        try:
-            user = await app.get_users(user_id)
-            duration = datetime.now() - join_time
-            hours, remainder = divmod(duration.seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            text += f"• {user.mention} - {hours}h {minutes}m {seconds}s\n"
-        except Exception as e:
-            print(f"Error getting user info: {e}")
-            text += f"• Unknown user (ID: {user_id})\n"
-
+    text = await tracker.get_participants_text(message.chat.id)
     await message.reply(text)
 
-# Handler to detect new voice chats
-@app.on_message(filters.video_chat_started)
-async def voice_chat_started(_, message: Message):
+@app.on_message(command(["vcinfo", "vcstatus"]))
+async def voice_chat_info(_, message: Message):
     chat_id = message.chat.id
     try:
-        # Get call info using raw API
-        call = await app.send(
-            functions.phone.GetGroupCall(
-                call=types.InputGroupCall(
-                    id=message.voice_chat.id,
-                    access_hash=0  # You'll need to get the actual access hash
-                ),
-                limit=100
-            )
-        )
+        full_chat = await app.send(functions.messages.GetFullChat(chat_id=chat_id))
         
-        vc_tracker.active_calls[chat_id] = {
-            "call": call.call,
-            "participants": {}
-        }
-        await message.reply("Voice chat started. Tracking participants...")
+        if hasattr(full_chat.full_chat, 'call'):
+            call = full_chat.full_chat.call
+            participants_count = len(tracker.active_calls.get(chat_id, {}))
+            
+            text = (
+                "**📊 Voice Chat Info**\n\n"
+                f"• Participants: {participants_count}\n"
+                f"• Tracking: {'✅ Enabled' if tracker.tracking_enabled else '❌ Disabled'}"
+            )
+        else:
+            text = "No active voice chat"
     except Exception as e:
-        print(f"Error tracking new voice chat: {e}")
+        text = f"Error: {str(e)}"
+    
+    await message.reply(text)
 
-# Handler to detect ended voice chats
-@app.on_message(filters.video_chat_ended)
-async def voice_chat_ended(_, message: Message):
-    chat_id = message.chat.id
-    if chat_id in vc_tracker.active_calls:
-        vc_tracker.active_calls.pop(chat_id)
-    await message.reply("Voice chat ended. Stopped tracking participants.")
+# Start tracking when bot starts
+async def start_services():
+    await tracker.start()
