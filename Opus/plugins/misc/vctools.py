@@ -94,6 +94,5 @@ async def monitor_voice_chats():
         await asyncio.sleep(5)
 
 # Start monitor loop after app is started
-@app.on_startup()
 async def start_vc_monitor(_: "Client"):
     asyncio.create_task(monitor_voice_chats())
