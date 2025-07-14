@@ -1,111 +1,89 @@
 import asyncio
-from pyrogram import filters, Client
+from pyrogram import Client, filters, raw
 from pyrogram.types import Message
-from pyrogram.raw.types import InputGroupCall
+from pyrogram.raw.types import UpdateGroupCallParticipants
 from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
+from pyrogram.raw.types import InputGroupCall
+from JANNATXMUSIC import app
 
-from Opus import app
-from Opus.core.call import Anony
-from Opus.core.call import group_assistant
-from Opus.utils.database import get_active_chats
-from config import BANNED_USERS
+# Cache for participant tracking per chat
+vc_participants = {}  # chat_id -> set(user_id)
+# VC tracking toggle per chat (default True)
+infovc_enabled_chats = {}  # chat_id -> True/False
 
-infovc_enabled = True
-vc_participants = {}
+# Toggle command: /infovc
+@app.on_message(filters.command("infovc") & filters.group)
+async def toggle_infovc(client: Client, message: Message):
+    chat_id = message.chat.id
+    current = infovc_enabled_chats.get(chat_id, True)  # default enabled
+    infovc_enabled_chats[chat_id] = not current
+    status = "enabled ✅" if not current else "disabled ❌"
+    await message.reply_text(
+        f"Voice Chat join/leave tracking is now **{status}**.",
+        quote=True
+    )
 
-@app.on_message(filters.command("infovc", prefixes=["/"]) & ~filters.bot)
-async def toggle_infovc(_, message: Message):
-    global infovc_enabled
-    args = message.command
-    if len(args) == 2 and args[1].lower() in ["on", "off"]:
-        infovc_enabled = args[1].lower() == "on"
-        status = "enabled ✅" if infovc_enabled else "disabled 🔕"
-        print(f"[INFOVC] Tracking toggled: {status}")
-        await message.reply_text(f"VC participant tracking {status}")
-    else:
-        await message.reply_text("Usage: /infovc on or /infovc off")
+# Raw update handler for VC participant tracking
+@app.on_raw_update()
+async def handle_video_chat_participants(client: Client, update, users, chats):
+    if not isinstance(update, UpdateGroupCallParticipants):
+        return
 
-def format_change(user, action: str):
-    name = (user.first_name or "") + (f" {user.last_name}" if user.last_name else "")
-    mention = f"[{name}](tg://user?id={user.id})"
-    return f"🎙️ **Voice Chat Update**\n👤 {mention}\n📌 **Action:** `{action}`"
+    try:
+        # Extract chat_id from chats map (fallback guess)
+        if not chats:
+            return
+        chat_id = list(chats.values())[0].id
 
-async def monitor_voice_chats():
-    await asyncio.sleep(1)
-    print("[VC Monitor] Started monitoring voice chats.")
-    while True:
-        if not infovc_enabled:
-            await asyncio.sleep(1)
-            continue
+        # Respect toggle setting (default: enabled)
+        if not infovc_enabled_chats.get(chat_id, True):
+            return
 
-        try:
-            active_chats = await get_active_chats()
-            print(f"[VC Monitor] Active chats to check: {active_chats}")
-        except Exception as e:
-            print(f"[VC Monitor] Error fetching active chats: {e}")
-            active_chats = []
+        # Fetch group call object
+        call_info = await client.send(
+            GetGroupCall(call=update.call, limit=1)
+        )
 
-        for chat_id in active_chats:
-            print(f"[VC Monitor] Checking chat ID: {chat_id}")
+        # Fetch current participants
+        result = await client.send(
+            GetGroupParticipants(call=update.call, ids=[])
+        )
+
+        current_users = set(p.peer.user_id for p in result.participants)
+        old_users = vc_participants.get(chat_id, set())
+
+        # Compare old vs new
+        joined = current_users - old_users
+        left = old_users - current_users
+
+        # Update cache
+        vc_participants[chat_id] = current_users
+
+        # Announce joined
+        for user_id in joined:
             try:
-                assistant = await group_assistant(Anony, chat_id)
-                if not assistant:
-                    print(f"[VC Monitor] No assistant available for chat {chat_id}")
-                    continue
-
-                active_call = await Anony.get_call(chat_id)
-                if not active_call:
-                    print(f"[VC Monitor] No active call in chat {chat_id}")
-                    continue
-
-                print(f"[VC Monitor] Getting call info for chat {chat_id}")
-                call = await assistant.invoke(
-                    GetGroupCall(call=InputGroupCall(id=active_call.id, access_hash=active_call.access_hash))
+                user = await client.get_users(user_id)
+                text = (
+                    f"🎉 #JoinVideoChat 🎉\n\n"
+                    f"Name : {user.mention}\n"
+                    f"Action : Joined\n\n"
                 )
-                call = call.call
-
-                print(f"[VC Monitor] Fetching participants for chat {chat_id}")
-                result = await assistant.invoke(
-                    GetGroupParticipants(call=InputGroupCall(id=call.id, access_hash=call.access_hash), ids=[])
-                )
-                new_ids = [p.user_id for p in result.participants]
-                old_ids = vc_participants.get(chat_id, [])
-
-                joined = [i for i in new_ids if i not in old_ids]
-                left = [i for i in old_ids if i not in new_ids]
-
-                if joined:
-                    print(f"[VC Monitor] Users joined in {chat_id}: {joined}")
-                if left:
-                    print(f"[VC Monitor] Users left in {chat_id}: {left}")
-
-                for uid in joined:
-                    try:
-                        user = await app.get_users(uid)
-                        msg = await app.send_message(chat_id, format_change(user, "Joined"), parse_mode="markdown")
-                        await asyncio.sleep(0.5)
-                        await msg.delete()
-                        print(f"[VC Monitor] Announced join of {uid} in {chat_id}")
-                    except Exception as e:
-                        print(f"[VC Monitor] Error announcing join of {uid}: {e}")
-
-                for uid in left:
-                    try:
-                        user = await app.get_users(uid)
-                        msg = await app.send_message(chat_id, format_change(user, "Left"), parse_mode="markdown")
-                        await asyncio.sleep(0.5)
-                        await msg.delete()
-                        print(f"[VC Monitor] Announced leave of {uid} in {chat_id}")
-                    except Exception as e:
-                        print(f"[VC Monitor] Error announcing leave of {uid}: {e}")
-
-                vc_participants[chat_id] = new_ids
-
+                await client.send_message(chat_id, text)
             except Exception as e:
-                print(f"[VC Monitor] General error in chat {chat_id}: {e}")
-                continue
+                print(f"Error announcing join: {e}")
 
-        await asyncio.sleep(5)
+        # Announce left
+        for user_id in left:
+            try:
+                user = await client.get_users(user_id)
+                text = (
+                    f"#LeftVideoChat😕\n\n"
+                    f"Name : {user.mention}\n"
+                    f"Action : Left\n\n"
+                )
+                await client.send_message(chat_id, text)
+            except Exception as e:
+                print(f"Error announcing leave: {e}")
 
-async def start_vc_monitor(_: "Client"):
-    asyncio.create_task(monitor_voice_chats())
+    except Exception as e:
+        print(f"VC tracking error: {e}")
