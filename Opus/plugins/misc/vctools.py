@@ -4,7 +4,7 @@ from pyrogram.types import Message
 from pyrogram.raw.types import UpdateGroupCallParticipants
 from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
 from pyrogram.raw.types import InputGroupCall
-from JANNATXMUSIC import app
+from Opus import app
 
 # Cache for participant tracking per chat
 vc_participants = {}  # chat_id -> set(user_id)
