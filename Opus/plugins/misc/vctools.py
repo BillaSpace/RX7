@@ -15,7 +15,7 @@ from Opus.utils.database import (
     add_active_video_chat,
     remove_active_video_chat,
 )
-from Opus.utils.logger import LOGGER
+from Opus import LOGGER
 
 vc_participants = {}
 infovc_enabled = {}
