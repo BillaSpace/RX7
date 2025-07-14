@@ -1,4 +1,4 @@
-from pyrogram import filters
+from pyrogram import filters, Message
 from pyrogram import raw
 from pyrogram.raw.types import UpdateGroupCallParticipants
 from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
