@@ -15,7 +15,7 @@ from Opus.utils.database import (
     add_active_video_chat,
     remove_active_video_chat,
 )
-from Opus.misc import LOGGER
+from Opus import LOGGER
 
 LOGGER = LOGGER(__name__)
 
