@@ -1,5 +1,6 @@
 from pyrogram.enums import ChatType
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.errors.exceptions.forbidden_403 import ChatWriteForbidden
 
 from Opus import app
 from Opus.misc import SUDOERS, db
@@ -17,7 +18,6 @@ from config import SUPPORT_CHAT, adminlist, confirmer
 from strings import get_string
 
 from ..formatters import int_to_alpha
-
 
 def AdminRightsCheck(mystic):
     async def wrapper(client, message):
@@ -38,6 +38,7 @@ def AdminRightsCheck(mystic):
             _ = get_string(language)
         except:
             _ = get_string("en")
+
         if message.sender_chat:
             upl = InlineKeyboardMarkup(
                 [
@@ -50,6 +51,7 @@ def AdminRightsCheck(mystic):
                 ]
             )
             return await message.reply_text(_["general_3"], reply_markup=upl)
+
         if message.command[0][0] == "c":
             chat_id = await get_cmode(message.chat.id)
             if chat_id is None:
@@ -60,8 +62,13 @@ def AdminRightsCheck(mystic):
                 return await message.reply_text(_["cplay_4"])
         else:
             chat_id = message.chat.id
+
         if not await is_active_chat(chat_id):
-            return await message.reply_text(_["general_5"])
+            try:
+                return await message.reply_text(_["general_5"])
+            except ChatWriteForbidden:
+                return  # Exit gracefully without crashing
+
         is_non_admin = await is_nonadmin_chat(message.chat.id)
         if not is_non_admin:
             if message.from_user.id not in SUDOERS:
@@ -89,7 +96,7 @@ def AdminRightsCheck(mystic):
                                     [
                                         InlineKeyboardButton(
                                             text="ᴠᴏᴛᴇ",
-                                            callback_data=f"ADMIN  UpVote|{chat_id}_{MODE}",
+                                            callback_data=f"ADMIN UpVote|{chat_id}_{MODE}",
                                         ),
                                     ]
                                 ]
@@ -101,7 +108,10 @@ def AdminRightsCheck(mystic):
                                 file = db[chat_id][0]["file"]
                             except:
                                 return await message.reply_text(_["admin_14"])
-                            senn = await message.reply_text(text, reply_markup=upl)
+                            try:
+                                senn = await message.reply_text(text, reply_markup=upl)
+                            except ChatWriteForbidden:
+                                return  # Exit gracefully
                             confirmer[chat_id][senn.id] = {
                                 "vidid": vidid,
                                 "file": file,
@@ -113,7 +123,6 @@ def AdminRightsCheck(mystic):
         return await mystic(client, message, _, chat_id)
 
     return wrapper
-
 
 def AdminActual(mystic):
     async def wrapper(client, message):
@@ -134,6 +143,7 @@ def AdminActual(mystic):
             _ = get_string(language)
         except:
             _ = get_string("en")
+
         if message.sender_chat:
             upl = InlineKeyboardMarkup(
                 [
@@ -146,6 +156,7 @@ def AdminActual(mystic):
                 ]
             )
             return await message.reply_text(_["general_3"], reply_markup=upl)
+
         if message.from_user.id not in SUDOERS:
             try:
                 member = (
@@ -154,11 +165,11 @@ def AdminActual(mystic):
             except:
                 return
             if not member.can_manage_video_chats:
-                return await message.reply(_["general_4"])
+                return await message.reply_text(_["general_4"])
+
         return await mystic(client, message, _)
 
     return wrapper
-
 
 def ActualAdminCB(mystic):
     async def wrapper(client, CallbackQuery):
@@ -168,13 +179,16 @@ def ActualAdminCB(mystic):
                     f"{app.mention} ɪs ᴜɴᴅᴇʀ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ, ᴠɪsɪᴛ sᴜᴘᴘᴏʀᴛ ᴄʜᴀᴛ ғᴏʀ ᴋɴᴏᴡɪɴɢ ᴛʜᴇ ʀᴇᴀsᴏɴ.",
                     show_alert=True,
                 )
+
         try:
             language = await get_lang(CallbackQuery.message.chat.id)
             _ = get_string(language)
         except:
             _ = get_string("en")
+
         if CallbackQuery.message.chat.type == ChatType.PRIVATE:
             return await mystic(client, CallbackQuery, _)
+
         is_non_admin = await is_nonadmin_chat(CallbackQuery.message.chat.id)
         if not is_non_admin:
             try:
