@@ -6,24 +6,46 @@ from pyrogram.raw.functions.phone import GetGroupParticipants, GetGroupCall
 
 from Opus import app
 from Opus.core.call import Anony
-from Opus.utils.database import get_active_video_chats, is_active_video_chat
-from logging import getLogger
-
-LOGGER = getLogger(__name__)
+from Opus.utils.database import (
+    get_active_video_chats,
+    is_active_video_chat,
+)
+from Opus import LOGGER
 
 vc_participants = {}
 infovc_enabled = {}
 
-# Toggle VC info tracking
+
 @app.on_message(filters.command("infovc") & filters.group)
-async def toggle_vc_status(_, message: Message):
+async def set_vc_status(_, message: Message):
     chat_id = message.chat.id
-    current = infovc_enabled.get(chat_id, True)
-    infovc_enabled[chat_id] = not current
-    await message.reply_text(
-        f"🔁 Voice Chat tracking is now {'enabled ✅' if not current else 'disabled ❌'}."
-    )
-    LOGGER.info(f"[INFOVC] Chat {chat_id} tracking set to {not current}")
+    args = message.text.split()
+
+    if len(args) < 2:
+        status = infovc_enabled.get(chat_id, False)
+        return await message.reply_text(
+            f"🔍 Voice Chat tracking is currently {'enabled ✅' if status else 'disabled ❌'}.\n"
+            f"Use `/infovc on` or `/infovc off` to change it.",
+            quote=True,
+        )
+
+    arg = args[1].lower()
+
+    if arg in ["on", "enable"]:
+        infovc_enabled[chat_id] = True
+        await message.reply_text("✅ Voice Chat tracking has been **enabled**.", quote=True)
+        LOGGER(__name__).info(f"[INFOVC] Chat {chat_id} tracking set to True")
+
+    elif arg in ["off", "disable"]:
+        infovc_enabled[chat_id] = False
+        await message.reply_text("❌ Voice Chat tracking has been **disabled**.", quote=True)
+        LOGGER(__name__).info(f"[INFOVC] Chat {chat_id} tracking set to False")
+
+    else:
+        await message.reply_text(
+            "⚠️ Invalid command.\nUse `/infovc on` or `/infovc off`.",
+            quote=True,
+        )
 
 
 @Anony.userbot1.on_raw_update()
@@ -32,42 +54,41 @@ async def handle_groupcall_participants(client, update, users, chats):
         return
 
     try:
-        # STEP 1: Get chat_id from update.call by matching active video chats
-        chat_id = None
         active_chats = await get_active_video_chats()
+        chat_id = None
 
+        # Match the update.call.id with each active VC chat
         for active_chat in active_chats:
             try:
-                gc = await client.send(GetGroupCall(peer=await client.resolve_peer(active_chat)))
-                if gc.call.id == update.call.id:
+                resolved = await client.resolve_peer(active_chat)
+                group_call = await client.send(GetGroupCall(peer=resolved))
+                if group_call.call.id == update.call.id:
                     chat_id = active_chat
                     break
-            except Exception:
+            except Exception as e:
                 continue
 
         if not chat_id:
-            LOGGER.debug("[VC DEBUG] No active chat matched update.call.id")
+            LOGGER(__name__).debug("[VC DEBUG] No active chat matched update.call.id")
             return
 
-        if not infovc_enabled.get(chat_id, True):
-            LOGGER.debug(f"[VC DEBUG] Tracking disabled for {chat_id}")
+        if not infovc_enabled.get(chat_id, False):
+            LOGGER(__name__).debug(f"[VC DEBUG] Tracking disabled for {chat_id}")
             return
 
-        # STEP 2: Fetch current VC participants
         try:
-            response = await client.send(GetGroupParticipants(call=update.call, ids=[]))
-            current = set(p.peer.user_id for p in response.participants if hasattr(p.peer, "user_id"))
+            result = await client.send(GetGroupParticipants(call=update.call, ids=[]))
+            current = set(p.peer.user_id for p in result.participants)
         except Exception as e:
-            LOGGER.warning(f"[VC DEBUG] GetGroupParticipants failed: {e}")
+            LOGGER(__name__).error(f"[VC DEBUG] GetGroupParticipants failed: {e}")
             return
 
-        # STEP 3: Compare with previous participants
         old = vc_participants.get(chat_id, set())
         joined = current - old
         left = old - current
         vc_participants[chat_id] = current
 
-        LOGGER.info(f"[VC DEBUG] Chat {chat_id}: {len(joined)} joined, {len(left)} left")
+        LOGGER(__name__).info(f"[VC DEBUG] Chat {chat_id}: {len(joined)} joined, {len(left)} left")
 
         for user_id in joined:
             try:
@@ -77,7 +98,7 @@ async def handle_groupcall_participants(client, update, users, chats):
                     f"🎉 #JoinVideoChat 🎉\n\n**Name**: {user.mention}\n**Action**: Joined",
                 )
             except Exception as e:
-                LOGGER.error(f"[VC JOIN ERROR] {user_id} in {chat_id}: {e}")
+                LOGGER(__name__).warning(f"[VC JOIN ERROR] {user_id} in {chat_id}: {e}")
 
         for user_id in left:
             try:
@@ -87,7 +108,7 @@ async def handle_groupcall_participants(client, update, users, chats):
                     f"😕 #LeftVideoChat 😕\n\n**Name**: {user.mention}\n**Action**: Left",
                 )
             except Exception as e:
-                LOGGER.error(f"[VC LEFT ERROR] {user_id} in {chat_id}: {e}")
+                LOGGER(__name__).warning(f"[VC LEFT ERROR] {user_id} in {chat_id}: {e}")
 
     except Exception as e:
-        LOGGER.error(f"[RAW UPDATE ERROR] {e}")
+        LOGGER(__name__).error(f"[RAW UPDATE ERROR] {e}")
