@@ -1,58 +1,62 @@
 import asyncio
 from pyrogram import filters
 from pyrogram.types import Message
-from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
 from pyrogram.raw.types import InputGroupCall
+from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
 
-from Opus import app, Userbot  # Your userbot from core.userbot
-from Opus.core.call import Anony  # PyTgCalls instance
+from Opus import app
+from Opus.core.call import Anony, group_assistant
+from Opus.utils.database import get_active_chats
+from config import BANNED_USERS
 
-# State
 infovc_enabled = True
-vc_participants = {}  # Stores {chat_id: [user_ids]}
+vc_participants = {}
 
-# /infovc on|off toggle
-@app.on_message(filters.command("infovc", prefixes=["/"]))
+@app.on_message(filters.command("infovc", prefixes=["/"]) & ~filters.edited & ~filters.bot)
 async def toggle_infovc(_, message: Message):
     global infovc_enabled
     args = message.command
     if len(args) == 2 and args[1].lower() in ["on", "off"]:
         infovc_enabled = args[1].lower() == "on"
         status = "enabled ✅" if infovc_enabled else "disabled 🔕"
-        await message.reply(f"VC participant alerts {status}")
+        await message.reply_text(f"VC participant tracking {status}")
     else:
-        await message.reply("Usage: /infovc [on/off]")
+        await message.reply_text("Usage: `/infovc on` or `/infovc off`")
 
-# Formatting messages
 def format_change(user, action: str):
     name = (user.first_name or "") + (f" {user.last_name}" if user.last_name else "")
     mention = f"[{name}](tg://user?id={user.id})"
-    return f"🎙️ #Voice Chat Update\n👤 {mention}\n📌 **Action:** {action}"
+    return f"🎙️ **Voice Chat Update**\n👤 {mention}\n📌 **Action:** {action}"
 
-# Main polling loop
 async def monitor_voice_chats():
-    await asyncio.sleep(1)  # Let bot warm up
+    await asyncio.sleep(0.2)  # Warmup delay
     while True:
         if not infovc_enabled:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.1)
             continue
 
-        for dialog in await userbot.get_dialogs():
-            chat = dialog.chat
-            if not (chat and chat.id):
+        try:
+            active_chats = await get_active_chats()
+        except Exception:
+            active_chats = []
+
+        for chat_id in active_chats:
+            assistant = group_assistant.get(chat_id)
+            if not assistant:
                 continue
 
-            chat_id = chat.id
             try:
-                call = await userbot.send(
-                    GetGroupCall(
-                        call=InputGroupCall(id=0, access_hash=0),  # placeholder
-                        group_call=await Anony.get_call(chat_id)
-                    )
+                # Try getting active VC call
+                active_call = await Anony.get_call(chat_id)
+                if not active_call:
+                    continue
+
+                call = await assistant.invoke(
+                    GetGroupCall(call=InputGroupCall(id=active_call.id, access_hash=active_call.access_hash))
                 )
                 call = call.call
 
-                result = await userbot.send(
+                result = await assistant.invoke(
                     GetGroupParticipants(call=InputGroupCall(id=call.id, access_hash=call.access_hash), ids=[])
                 )
                 new_ids = [p.user_id for p in result.participants]
@@ -61,27 +65,30 @@ async def monitor_voice_chats():
                 joined = [i for i in new_ids if i not in old_ids]
                 left = [i for i in old_ids if i not in new_ids]
 
-                # Send messages for joins
                 for uid in joined:
-                    user = await app.get_users(uid)
-                    msg = await app.send_message(chat_id, format_change(user, "Joined"))
-                    await asyncio.sleep(1)
-                    await msg.delete()
+                    try:
+                        user = await app.get_users(uid)
+                        msg = await app.send_message(chat_id, format_change(user, "Joined"))
+                        await asyncio.sleep(0.1)
+                        await msg.delete()
+                    except Exception:
+                        pass
 
-                # Send messages for leaves
                 for uid in left:
-                    user = await app.get_users(uid)
-                    msg = await app.send_message(chat_id, format_change(user, "Left"))
-                    await asyncio.sleep(1)
-                    await msg.delete()
+                    try:
+                        user = await app.get_users(uid)
+                        msg = await app.send_message(chat_id, format_change(user, "Left"))
+                        await asyncio.sleep(0.1)
+                        await msg.delete()
+                    except Exception:
+                        pass
 
                 vc_participants[chat_id] = new_ids
 
-            except Exception as e:
-                # Silently skip chats without active VC or permission
-                pass
+            except Exception:
+                continue
 
         await asyncio.sleep(5)
 
-# Start task in background
+# Start monitor loop
 asyncio.get_event_loop().create_task(monitor_voice_chats())
