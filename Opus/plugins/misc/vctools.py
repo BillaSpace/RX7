@@ -41,7 +41,7 @@ async def monitor_voice_chats():
             active_chats = []
 
         for chat_id in active_chats:
-            assistant = await group_assistant(chat_id)
+            assistant = Anony.group_assistant(chat_id)
             if not assistant:
                 continue
 
