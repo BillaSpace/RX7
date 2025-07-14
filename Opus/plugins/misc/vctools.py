@@ -10,7 +10,7 @@ import asyncio
 vc_participants = {}
 infovc_enabled = {}
 
-@app_on_message(filters.command("infovc") & filters.group)
+@app.on_message(filters.command("infovc") & filters.group)
 async def toggle_vc_status(_, message: Message):
     chat_id = message.chat.id
     current = infovc_enabled.get(chat_id, True)
