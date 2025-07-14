@@ -1,63 +1,87 @@
+import asyncio
 from pyrogram import filters
 from pyrogram.types import Message
-from typing import Union, List
-import asyncio
+from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
+from pyrogram.raw.types import InputGroupCall
 
-from Opus import app
-from Opus.core.call import Anony
+from Opus import app, userbot  # Your userbot from core.userbot
+from Opus.core.call import Anony  # PyTgCalls instance
 
-# Toggle VC join/leave notifications
+# State
 infovc_enabled = True
+vc_participants = {}  # Stores {chat_id: [user_ids]}
 
-def command(commands: Union[str, List[str]]):
-    return filters.command(commands, prefixes=["/"])
-
-@app.on_message(command(["infovc"]))
+# /infovc on|off toggle
+@app.on_message(filters.command("infovc", prefixes=["/"]))
 async def toggle_infovc(_, message: Message):
     global infovc_enabled
-    if len(message.command) > 1:
-        state = message.command[1].lower()
-        if state == "on":
-            infovc_enabled = True
-            await message.reply("✅ VC participants join/leave notifications Are enabled Now.")
-        elif state == "off":
-            infovc_enabled = False
-            await message.reply("🔕 VC join/leave notifications Are disabled Now.")
-        else:
-            await message.reply("⚠️ Usage: /infovc on or /infovc off")
+    args = message.command
+    if len(args) == 2 and args[1].lower() in ["on", "off"]:
+        infovc_enabled = args[1].lower() == "on"
+        status = "enabled ✅" if infovc_enabled else "disabled 🔕"
+        await message.reply(f"VC participant alerts {status}")
     else:
-        await message.reply("⚙️ Usage: /infovc on or /infovc off")
+        await message.reply("Usage: /infovc [on/off]")
 
-# Format message
-def format_user(user, action: str):
-    full_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
-    return (
-        "**🎙️ Voice Chat Update**\n"
-        f"**👤 User**: [{full_name}](tg://user?id={user.id})\n"
-        f"**🔗 Username**: @{user.username if user.username else 'N/A'}\n"
-        f"**🎯 Action**: {action}"
-    )
+# Formatting messages
+def format_change(user, action: str):
+    name = (user.first_name or "") + (f" {user.last_name}" if user.last_name else "")
+    mention = f"[{name}](tg://user?id={user.id})"
+    return f"🎙️ #Voice Chat Update\n👤 {mention}\n📌 **Action:** {action}"
 
-# Use on_participants_change instead of joined/left
-@Anony.on_participants_change()
-async def vc_participants_change(_, chat_id: int, joined: list, left: list):
-    if not infovc_enabled:
-        return
-
-    try:
-        # Handle joins
-        for user in joined:
-            u = user.user
-            msg = await app.send_message(chat_id, format_user(u, "Joined"))
+# Main polling loop
+async def monitor_voice_chats():
+    await asyncio.sleep(1)  # Let bot warm up
+    while True:
+        if not infovc_enabled:
             await asyncio.sleep(1)
-            await msg.delete()
+            continue
 
-        # Handle leaves
-        for user in left:
-            u = user.user
-            msg = await app.send_message(chat_id, format_user(u, "Left"))
-            await asyncio.sleep(1)
-            await msg.delete()
+        for dialog in await userbot.get_dialogs():
+            chat = dialog.chat
+            if not (chat and chat.id):
+                continue
 
-    except Exception as e:
-        print(f"[VC PARTICIPANT ERROR] in {chat_id} — {e}")
+            chat_id = chat.id
+            try:
+                call = await userbot.send(
+                    GetGroupCall(
+                        call=InputGroupCall(id=0, access_hash=0),  # placeholder
+                        group_call=await Anony.get_call(chat_id)
+                    )
+                )
+                call = call.call
+
+                result = await userbot.send(
+                    GetGroupParticipants(call=InputGroupCall(id=call.id, access_hash=call.access_hash), ids=[])
+                )
+                new_ids = [p.user_id for p in result.participants]
+
+                old_ids = vc_participants.get(chat_id, [])
+                joined = [i for i in new_ids if i not in old_ids]
+                left = [i for i in old_ids if i not in new_ids]
+
+                # Send messages for joins
+                for uid in joined:
+                    user = await app.get_users(uid)
+                    msg = await app.send_message(chat_id, format_change(user, "Joined"))
+                    await asyncio.sleep(1)
+                    await msg.delete()
+
+                # Send messages for leaves
+                for uid in left:
+                    user = await app.get_users(uid)
+                    msg = await app.send_message(chat_id, format_change(user, "Left"))
+                    await asyncio.sleep(1)
+                    await msg.delete()
+
+                vc_participants[chat_id] = new_ids
+
+            except Exception as e:
+                # Silently skip chats without active VC or permission
+                pass
+
+        await asyncio.sleep(5)
+
+# Start task in background
+asyncio.get_event_loop().create_task(monitor_voice_chats())
