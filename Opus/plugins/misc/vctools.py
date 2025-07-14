@@ -12,7 +12,7 @@ from config import BANNED_USERS
 infovc_enabled = True
 vc_participants = {}
 
-@app.on_message(filters.command("infovc", prefixes=["/"]) & ~filters.edited & ~filters.bot)
+@app.on_message(filters.command("infovc", prefixes=["/"]) & ~filters.bot)
 async def toggle_infovc(_, message: Message):
     global infovc_enabled
     args = message.command
