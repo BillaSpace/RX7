@@ -4,7 +4,7 @@ from pyrogram.types import Message
 from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
 from pyrogram.raw.types import InputGroupCall
 
-from Opus import app, userbot  # Your userbot from core.userbot
+from Opus import app, Userbot  # Your userbot from core.userbot
 from Opus.core.call import Anony  # PyTgCalls instance
 
 # State
