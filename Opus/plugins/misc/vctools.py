@@ -1,112 +1,120 @@
 import asyncio
 import logging
+
 from pyrogram import filters
-from pyrogram.types import Message
-from pyrogram.raw.types import (
-    UpdateGroupCall,
-    UpdateGroupCallParticipants,
-    InputGroupCall
-)
-from pyrogram.raw.functions.phone import (
-    GetGroupCall,
-    GetGroupParticipants
-)
+from pyrogram.raw.types import UpdateGroupCall, UpdateGroupCallParticipants
+from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
+from pyrogram.raw.types import InputGroupCall
+
 from Opus import app, LOGGER
 from Opus.core.call import group_assistant
-from Opus.utils.database import (
-    get_active_chats,
-    is_active_chat,
-    get_active_video_chats,
-    is_active_video_chat,
-)
+from Opus.utils.database import get_lang, get_active_chats, is_active_chat
+from Opus.utils.database import add_active_chat, remove_active_chat, add_active_video_chat, is_active_video_chat
+from strings import get_string
 
-infovc_enabled = {}
+infovc_enabled_chats = set()
 vc_participants = {}
 
-# Toggle Command
+LOG = LOGGER(__name__)
+
 @app.on_message(filters.command("infovc") & filters.group)
-async def toggle_vc_debug(_, message: Message):
+async def toggle_infovc(client, message):
     chat_id = message.chat.id
-    if not message.from_user:
-        return
+    language = await get_lang(chat_id)
+    _ = get_string(language)
 
-    if not message.from_user.id in (await app.get_chat_members(chat_id)):
-        return await message.reply("❌ You must be in this group to use this.")
+    if chat_id in infovc_enabled_chats:
+        infovc_enabled_chats.remove(chat_id)
+        LOG.info(f"[INFOVC] Chat {chat_id} tracking set to False")
+        return await message.reply_text("❌ Voice Chat tracking disabled.")
+    else:
+        infovc_enabled_chats.add(chat_id)
+        LOG.info(f"[INFOVC] Chat {chat_id} tracking set to True")
+        return await message.reply_text("✅ Voice Chat tracking enabled.")
 
-    current = infovc_enabled.get(chat_id, False)
-    infovc_enabled[chat_id] = not current
-    status = "enabled" if not current else "disabled"
-    LOGGER.info(f"[INFOVC] Chat {chat_id} tracking set to {not current}")
-    await message.reply(f"📢 VC participant tracking `{status}` in this chat.")
-
-# Participant Updates Handler
-async def handle_participant_update(update: UpdateGroupCallParticipants):
-    call = update.call
-    call_id = call.id
-    access_hash = call.access_hash
-
-    try:
-        for chat_id in infovc_enabled:
-            if not await is_active_chat(chat_id):
-                continue
-
-            assistant = await group_assistant(None, chat_id)
-            input_call = InputGroupCall(id=call_id, access_hash=access_hash)
-            group_call = await assistant.invoke(GetGroupParticipants(
-                call=input_call,
-                limit=0,
-                offset=""
-            ))
-
-            new_sources = {p.source: p.user_id for p in group_call.participants}
-            old_sources = vc_participants.get(chat_id, {})
-
-            joined = [uid for src, uid in new_sources.items() if src not in old_sources]
-            left = [uid for src, uid in old_sources.items() if src not in new_sources]
-
-            vc_participants[chat_id] = new_sources
-
-            for user_id in joined:
-                user = await assistant.get_users(user_id)
-                await app.send_message(chat_id, f"✅ **{user.first_name}** joined the VC.")
-
-            for user_id in left:
-                user = await assistant.get_users(user_id)
-                await app.send_message(chat_id, f"❌ **{user.first_name}** left the VC.")
-
-    except Exception as e:
-        LOGGER.warning(f"[VC DEBUG] Error in handle_participant_update: {e}")
-
-# VC Start/End Handler
-async def handle_call_status_update(update: UpdateGroupCall):
-    call = update.call
-    call_id = call.id
-    access_hash = call.access_hash
-
-    try:
-        for chat_id in infovc_enabled:
-            if not await is_active_chat(chat_id):
-                continue
-
-            assistant = await group_assistant(None, chat_id)
-            input_call = InputGroupCall(id=call_id, access_hash=access_hash)
-
-            try:
-                details = await assistant.invoke(GetGroupCall(call=input_call))
-                await app.send_message(chat_id, "🔴 **Voice Chat Started!**")
-            except Exception:
-                await app.send_message(chat_id, "⚪️ **Voice Chat Ended!**")
-
-    except Exception as e:
-        LOGGER.warning(f"[VC DEBUG] Error in handle_call_status_update: {e}")
-
-# Raw Listener with concurrency
 @app.on_raw_update()
-async def raw_listener(_, update, users, chats):
+async def raw_vc_monitor(client, update, users, chats):
     try:
-        if isinstance(update, UpdateGroupCallParticipants):
-            asyncio.create_task(handle_participant_update(update))
-        elif isinstance(update, UpdateGroupCall):
-            asyncio.create_task(handle_call_status_update(update))
+        if isinstance(update, UpdateGroupCall):
+            LOG.debug("[VC DEBUG] Detected UpdateGroupCall.")
+            await handle_group_call_update(client, update)
+
+        elif isinstance(update, UpdateGroupCallParticipants):
+            LOG.debug("[VC DEBUG] Detected UpdateGroupCallParticipants.")
+            await handle_group_call_participants(client, update)
+
     except Exception as e:
-        LOGGER.exception(f"[RAW_UPDATE ERROR] {e}")
+        LOG.error(f"[VC ERROR] {e}")
+
+async def handle_group_call_update(client, update):
+    try:
+        group_call = update.call
+        chat_id = await get_chat_id_from_group_call(client, group_call)
+
+        if chat_id and chat_id in infovc_enabled_chats:
+            if update.call:
+                LOG.info(f"[VC] Group Call updated in {chat_id}")
+                await app.send_message(chat_id, "🎙️ Voice Chat has been started or updated.")
+        else:
+            LOG.warning("[VC DEBUG] No active chat matched update.call.id (GroupCall update)")
+
+    except Exception as e:
+        LOG.error(f"[VC ERROR] handle_group_call_update: {e}")
+
+async def handle_group_call_participants(client, update):
+    try:
+        group_call = update.call
+        participants = update.participants
+
+        chat_id = await get_chat_id_from_group_call(client, group_call)
+        if chat_id is None:
+            LOG.warning("[VC DEBUG] No active chat matched update.call.id (Participants update)")
+            return
+
+        if chat_id not in infovc_enabled_chats:
+            return
+
+        assistant = await group_assistant(client, chat_id)
+
+        call = InputGroupCall(id=group_call.id, access_hash=group_call.access_hash)
+        call_info = await assistant.invoke(GetGroupParticipants(call=call, offset="", limit=0))
+
+        current_participants = [p.user_id for p in call_info.participants]
+        previous_participants = vc_participants.get(chat_id, set())
+
+        joined = set(current_participants) - previous_participants
+        left = previous_participants - set(current_participants)
+
+        vc_participants[chat_id] = set(current_participants)
+
+        if joined:
+            for user_id in joined:
+                user = next((u for u in call_info.users if u.id == user_id), None)
+                if user:
+                    name = f"{user.first_name} {user.last_name or ''}".strip()
+                    await app.send_message(chat_id, f"➕ {name} joined the VC.")
+
+        if left:
+            for user_id in left:
+                # Use cached name if possible
+                name = "A user"
+                await app.send_message(chat_id, f"➖ {name} left the VC.")
+
+    except Exception as e:
+        LOG.error(f"[VC ERROR] handle_group_call_participants: {e}")
+
+async def get_chat_id_from_group_call(client, group_call):
+    try:
+        active_chats = await get_active_chats()
+        for chat_id in active_chats:
+            assistant = await group_assistant(client, chat_id)
+            try:
+                call_info = await assistant.invoke(GetGroupCall(peer=await app.resolve_peer(chat_id)))
+                if call_info.call.id == group_call.id:
+                    return chat_id
+            except Exception as e:
+                continue
+        return None
+    except Exception as e:
+        LOG.error(f"[VC ERROR] get_chat_id_from_group_call: {e}")
+        return None
