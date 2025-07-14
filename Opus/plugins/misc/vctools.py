@@ -161,7 +161,7 @@ async def show_vc_participants(_, message: Message):
     await message.reply(text)
 
 # Handler to detect new voice chats
-@app.on_message(filters.voice_chat_started)
+@app.on_message(filters.video_chat_started)
 async def voice_chat_started(_, message: Message):
     chat_id = message.chat.id
     try:
