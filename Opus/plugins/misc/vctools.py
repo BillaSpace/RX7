@@ -180,11 +180,11 @@ async def voice_chat_info(_, message: Message):
     
     await message.reply(text)
 
-@app.on_message(filters.voice_chat_started)
+@app.on_message(filters.video_chat_started)
 async def voice_chat_started(_, message: Message):
     await tracker.start()
 
-@app.on_message(filters.voice_chat_ended)
+@app.on_message(filters.video_chat_ended)
 async def voice_chat_ended(_, message: Message):
     if message.chat.id in tracker.active_calls:
         del tracker.active_calls[message.chat.id]
