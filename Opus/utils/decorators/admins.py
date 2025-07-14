@@ -19,6 +19,7 @@ from strings import get_string
 
 from ..formatters import int_to_alpha
 
+
 def AdminRightsCheck(mystic):
     async def wrapper(client, message):
         if await is_maintenance() is False:
@@ -29,7 +30,7 @@ def AdminRightsCheck(mystic):
                         disable_web_page_preview=True,
                     )
                 except ChatWriteForbidden:
-                    return  # Exit gracefully if bot can't send message
+                    return
 
         try:
             await message.delete()
@@ -44,21 +45,13 @@ def AdminRightsCheck(mystic):
 
         if message.sender_chat:
             upl = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            text="ʜᴏᴡ ᴛᴏ ғɪx ?",
-                            callback_data="AnonymousAdmin",
-                        ),
-                    ]
-                ]
+                [[InlineKeyboardButton(text="ʜᴏᴡ ᴛᴏ ғɪx ?", callback_data="AnonymousAdmin")]]
             )
             try:
                 return await message.reply_text(_["general_3"], reply_markup=upl)
             except ChatWriteForbidden:
-                return  # Exit gracefully
+                return
 
-        # Initialize chat_id to message.chat.id by default
         chat_id = message.chat.id
         if message.command and message.command[0][0] == "c":
             chat_id = await get_cmode(message.chat.id)
@@ -79,7 +72,7 @@ def AdminRightsCheck(mystic):
             try:
                 return await message.reply_text(_["general_5"])
             except ChatWriteForbidden:
-                return  # Exit gracefully without crashing
+                return
 
         is_non_admin = await is_nonadmin_chat(message.chat.id)
         if not is_non_admin:
@@ -110,14 +103,11 @@ def AdminRightsCheck(mystic):
                                     return
                             MODE = command.title()
                             upl = InlineKeyboardMarkup(
-                                [
-                                    [
-                                        InlineKeyboardButton(
-                                            text="ᴠᴏᴛᴇ",
-                                            callback_data=f"ADMIN UpVote|{chat_id}_{MODE}",
-                                        ),
-                                    ]
-                                ]
+                                [[
+                                    InlineKeyboardButton(
+                                        text="ᴠᴏᴛᴇ", callback_data=f"ADMIN UpVote|{chat_id}_{MODE}"
+                                    )
+                                ]]
                             )
                             if chat_id not in confirmer:
                                 confirmer[chat_id] = {}
@@ -132,11 +122,8 @@ def AdminRightsCheck(mystic):
                             try:
                                 senn = await message.reply_text(text, reply_markup=upl)
                             except ChatWriteForbidden:
-                                return  # Exit gracefully
-                            confirmer[chat_id][senn.id] = {
-                                "vidid": vidid,
-                                "file": file,
-                            }
+                                return
+                            confirmer[chat_id][senn.id] = {"vidid": vidid, "file": file}
                             return
                         else:
                             try:
@@ -148,6 +135,7 @@ def AdminRightsCheck(mystic):
 
     return wrapper
 
+
 def AdminActual(mystic):
     async def wrapper(client, message):
         if await is_maintenance() is False:
@@ -158,7 +146,7 @@ def AdminActual(mystic):
                         disable_web_page_preview=True,
                     )
                 except ChatWriteForbidden:
-                    return  # Exit gracefully
+                    return
 
         try:
             await message.delete()
@@ -173,14 +161,7 @@ def AdminActual(mystic):
 
         if message.sender_chat:
             upl = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            text="ʜᴏᴡ ᴛᴏ ғɪx ?",
-                            callback_data="AnonymousAdmin",
-                        ),
-                    ]
-                ]
+                [[InlineKeyboardButton(text="ʜᴏᴡ ᴛᴏ ғɪx ?", callback_data="AnonymousAdmin")]]
             )
             try:
                 return await message.reply_text(_["general_3"], reply_markup=upl)
@@ -189,20 +170,17 @@ def AdminActual(mystic):
 
         if message.from_user.id not in SUDOERS:
             try:
-                member = (
-                    await app.get_chat_member(message.chat.id, message.from_user.id)
-                ).privileges
+                member = await app.get_chat_member(message.chat.id, message.from_user.id)
+                privs = member.privileges
+                if not privs or not privs.can_manage_video_chats:
+                    return await message.reply_text(_["general_4"])
             except:
                 return
-            if not member.can_manage_video_chats:
-                try:
-                    return await message.reply_text(_["general_4"])
-                except ChatWriteForbidden:
-                    return
 
         return await mystic(client, message, _)
 
     return wrapper
+
 
 def ActualAdminCB(mystic):
     async def wrapper(client, CallbackQuery):
@@ -228,29 +206,24 @@ def ActualAdminCB(mystic):
         is_non_admin = await is_nonadmin_chat(CallbackQuery.message.chat.id)
         if not is_non_admin:
             try:
-                a = (
-                    await app.get_chat_member(
-                        CallbackQuery.message.chat.id,
-                        CallbackQuery.from_user.id,
-                    )
-                ).privileges
+                member = await app.get_chat_member(
+                    CallbackQuery.message.chat.id, CallbackQuery.from_user.id
+                )
+                privs = member.privileges
+                if not privs or not privs.can_manage_video_chats:
+                    if CallbackQuery.from_user.id not in SUDOERS:
+                        token = await int_to_alpha(CallbackQuery.from_user.id)
+                        _check = await get_authuser_names(CallbackQuery.from_user.id)
+                        if token not in _check:
+                            return await CallbackQuery.answer(
+                                _["general_4"], show_alert=True
+                            )
             except:
                 try:
                     return await CallbackQuery.answer(_["general_4"], show_alert=True)
                 except ChatWriteForbidden:
                     return
-            if not a.can_manage_video_chats:
-                if CallbackQuery.from_user.id not in SUDOERS:
-                    token = await int_to_alpha(CallbackQuery.from_user.id)
-                    _check = await get_authuser_names(CallbackQuery.from_user.id)
-                    if token not in _check:
-                        try:
-                            return await CallbackQuery.answer(
-                                _["general_4"],
-                                show_alert=True,
-                            )
-                        except ChatWriteForbidden:
-                            return
+
         return await mystic(client, CallbackQuery, _)
 
     return wrapper
