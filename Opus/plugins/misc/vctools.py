@@ -185,7 +185,7 @@ async def voice_chat_started(_, message: Message):
         print(f"Error tracking new voice chat: {e}")
 
 # Handler to detect ended voice chats
-@app.on_message(filters.voice_chat_ended)
+@app.on_message(filters.video_chat_ended)
 async def voice_chat_ended(_, message: Message):
     chat_id = message.chat.id
     if chat_id in vc_tracker.active_calls:
