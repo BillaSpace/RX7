@@ -5,7 +5,8 @@ from pyrogram.raw.types import InputGroupCall
 from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
 
 from Opus import app
-from Opus.core.call import Anony, group_assistant
+from Opus.core.call import Anony
+from Opus.core.call import group_assistant
 from Opus.utils.database import get_active_chats
 from config import BANNED_USERS
 
@@ -41,7 +42,7 @@ async def monitor_voice_chats():
             active_chats = []
 
         for chat_id in active_chats:
-            assistant = Anony.group_assistant(chat_id)
+            assistant = await group_assistant(chat_id)
             if not assistant:
                 continue
 
