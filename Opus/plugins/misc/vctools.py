@@ -191,5 +191,3 @@ async def voice_chat_ended(_, message: Message):
 
 async def start_tracker():
     await tracker.start()
-
-app.run(start_tracker())
