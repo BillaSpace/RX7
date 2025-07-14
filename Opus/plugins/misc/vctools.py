@@ -1,6 +1,5 @@
-from pyrogram import filters
+from pyrogram import filters, raw
 from pyrogram.types import Message
-from pyrogram import raw
 from pyrogram.raw.types import UpdateGroupCallParticipants
 from pyrogram.raw.functions.phone import GetGroupCall, GetGroupParticipants
 from Opus.core.call import Anony
@@ -24,26 +23,23 @@ async def handle_groupcall_participants(client, update, users, chats):
         return
 
     try:
-        # ✅ Get chat_id from update.call.peer
-        call_peer = update.call.peer
-        if hasattr(call_peer, "channel_id"):
-            chat_id = -100 * call_peer.channel_id
-        elif hasattr(call_peer, "chat_id"):
-            chat_id = -call_peer.chat_id
-        else:
-            print("[VC DEBUG] Cannot determine chat_id from peer")
+        # ✅ Extract chat_id from 'chats' dict
+        chat_id = None
+        if chats:
+            for c in chats.values():
+                if hasattr(c, "id"):
+                    chat_id = -100 * c.id if c.__class__.__name__ == "Channel" else -c.id
+                    break
+
+        if not chat_id:
+            print("[VC DEBUG] No chat_id could be determined from chats dict.")
             return
 
         if not infovc_enabled.get(chat_id, True):
             print(f"[VC DEBUG] Skipped (disabled): {chat_id}")
             return
 
-        try:
-            call_info = await client.send(GetGroupCall(call=update.call, limit=1))
-        except Exception as e:
-            print(f"[VC DEBUG] GetGroupCall failed: {e}")
-            return
-
+        # ✅ Fetch current VC participants
         try:
             response = await client.send(GetGroupParticipants(call=update.call, ids=[]))
             current = set(p.peer.user_id for p in response.participants)
