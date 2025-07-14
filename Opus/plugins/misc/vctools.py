@@ -4,7 +4,7 @@ from pyrogram.raw import functions, types
 from datetime import datetime
 import asyncio
 from typing import Dict, Set, Union, List
-from Opus import app  # Your main app instance
+from AnonXMusic import app
 
 class VCTracker:
     def __init__(self):
@@ -17,9 +17,6 @@ class VCTracker:
         if not self.running:
             self.running = True
             asyncio.create_task(self._tracker_loop())
-
-    async def stop(self):
-        self.running = False
 
     async def _tracker_loop(self):
         while self.running:
@@ -67,6 +64,7 @@ class VCTracker:
         try:
             full_chat = await app.send(
                 functions.messages.GetFullChat(chat_id=chat_id)
+            )
             if hasattr(full_chat.full_chat, 'call'):
                 return full_chat.full_chat.call
             return None
@@ -89,6 +87,8 @@ class VCTracker:
                 await self._notify_leave(chat_id, user_id, join_time)
 
     async def _notify_join(self, chat_id: int, user_id: int):
+        if not self.tracking_enabled:
+            return
         try:
             user = await app.get_users(user_id)
             await app.send_message(
@@ -99,6 +99,8 @@ class VCTracker:
             print(f"Error notifying join: {e}")
 
     async def _notify_leave(self, chat_id: int, user_id: int, join_time: datetime):
+        if not self.tracking_enabled:
+            return
         try:
             user = await app.get_users(user_id)
             duration = datetime.now() - join_time
@@ -128,14 +130,12 @@ class VCTracker:
                 text += f"• Unknown User (ID: {user_id})\n"
         return text
 
-# Initialize tracker
 tracker = VCTracker()
 
-# Command filters
 def command(cmd: Union[str, List[str]]):
     return filters.command(cmd, prefixes=["/", "!"])
 
-@app.on_message(command(["vctrack", "vcmode"]))
+@app.on_message(command(["infovc", "vcmode"]))
 async def toggle_tracking(_, message: Message):
     if len(message.command) > 1:
         arg = message.command[1].lower()
@@ -146,17 +146,13 @@ async def toggle_tracking(_, message: Message):
             tracker.tracking_enabled = False
             await message.reply("❌ Voice chat tracking disabled")
         else:
-            await message.reply("Usage: /vctrack [on|off]")
+            await message.reply("Usage: /infovc [on|off]")
     else:
         status = "enabled" if tracker.tracking_enabled else "disabled"
         await message.reply(f"Tracking is {status}\nUsage: /vctrack [on|off]")
 
 @app.on_message(command(["vclist", "vcusers"]))
 async def show_participants(_, message: Message):
-    if not tracker.tracking_enabled:
-        await message.reply("Tracking disabled. Enable with /vctrack on")
-        return
-    
     text = await tracker.get_participants_text(message.chat.id)
     await message.reply(text)
 
@@ -164,7 +160,9 @@ async def show_participants(_, message: Message):
 async def voice_chat_info(_, message: Message):
     chat_id = message.chat.id
     try:
-        full_chat = await app.send(functions.messages.GetFullChat(chat_id=chat_id))
+        full_chat = await app.send(
+            functions.messages.GetFullChat(chat_id=chat_id)
+        )
         
         if hasattr(full_chat.full_chat, 'call'):
             call = full_chat.full_chat.call
@@ -182,6 +180,16 @@ async def voice_chat_info(_, message: Message):
     
     await message.reply(text)
 
-# Start tracking when bot starts
-async def start_services():
+@app.on_message(filters.voice_chat_started)
+async def voice_chat_started(_, message: Message):
     await tracker.start()
+
+@app.on_message(filters.voice_chat_ended)
+async def voice_chat_ended(_, message: Message):
+    if message.chat.id in tracker.active_calls:
+        del tracker.active_calls[message.chat.id]
+
+async def start_tracker():
+    await tracker.start()
+
+app.run(start_tracker())
