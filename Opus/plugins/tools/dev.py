@@ -86,14 +86,17 @@ async def executor(client: app, message: Message):
                 ]
             ]
         )
-        await message.reply_document(
-            document=filename,
-            caption=f"<b>⥤ ᴇᴠᴀʟ :</b>\n<code>{cmd[0:980]}</code>\n\n<b>⥤ ʀᴇsᴜʟᴛ :</b>\nAttached Document",
-            quote=False,
-            reply_markup=keyboard,
-        )
+        try:
+            await message.reply_document(
+                document=filename,
+                caption=f"<b>⥤ ᴇᴠᴀʟ :</b>\n<code>{cmd[0:980]}</code>\n\n<b>⥤ ʀᴇsᴜʟᴛ :</b>\nAttached Document",
+                quote=False,
+                reply_markup=keyboard,
+            )
+            os.remove(filename)
+        except Exception as e:
+            await edit_or_reply(message, text=f"<b>Error sending document:</b>\n<pre>{e}</pre>")
         await message.delete()
-        os.remove(filename)
     else:
         t2 = time()
         keyboard = InlineKeyboardMarkup(
@@ -153,59 +156,52 @@ async def forceclose_command(_, CallbackQuery):
 async def shellrunner(_, message: Message):
     if len(message.command) < 2:
         return await edit_or_reply(message, text="<b>ᴇxᴀᴍᴩʟᴇ :</b>\n/sh git pull")
+    
     text = message.text.split(None, 1)[1]
-    if "\n" in text:
-        code = text.split("\n")
+    try:
+        # Optional: Check if file exists for rm commands
+        if "rm" in text and not os.path.exists(text.split()[-1]):
+            return await edit_or_reply(message, text=f"<b>ERROR:</b>\n<pre>File or directory '{text.split()[-1]}' does not exist</pre>")
+        
+        # Run the command in a shell
+        process = subprocess.Popen(
+            text,
+            shell=True,  # Enable shell to interpret commands like rm -rf
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True  # Return output as strings
+        )
+        # Wait for the process to complete and capture output
+        stdout, stderr = process.communicate()
+        
         output = ""
-        for x in code:
-            shell = re.split(""" (?=(?:[^'"]|'[^']*'|"[^"]*")*$)""", x)
-            try:
-                process = subprocess.Popen(
-                    shell,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-            except Exception as err:
-                await edit_or_reply(message, text=f"<b>ERROR :</b>\n<pre>{err}</pre>")
-            output += f"<b>{code}</b>\n"
-            output += process.stdout.read()[:-1].decode("utf-8")
-            output += "\n"
-    else:
-        shell = re.split(""" (?=(?:[^'"]|'[^']*'|"[^"]*")*$)""", text)
-        for a in range(len(shell)):
-            shell[a] = shell[a].replace('"', "")
-        try:
-            process = subprocess.Popen(
-                shell,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except Exception as err:
-            print(err)
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            errors = traceback.format_exception(
-                etype=exc_type,
-                value=exc_obj,
-                tb=exc_tb,
-            )
-            return await edit_or_reply(
-                message, text=f"<b>ERROR :</b>\n<pre>{''.join(errors)}</pre>"
-            )
-        output = process.stdout.read()[:-1].decode("utf-8")
-    if str(output) == "\n":
-        output = None
-    if output:
+        if stdout:
+            output += stdout
+        if stderr:
+            output += stderr
+        
+        if not output:
+            output = "Success (no output)"
+        
         if len(output) > 4096:
-            with open("output.txt", "w+") as file:
+            with open("output.txt", "w+", encoding="utf-8") as file:
                 file.write(output)
-            await app.send_document(
-                message.chat.id,
-                "output.txt",
-                reply_to_message_id=message.id,
-                caption="<code>Output</code>",
-            )
-            return os.remove("output.txt")
-        await edit_or_reply(message, text=f"<b>OUTPUT :</b>\n<pre>{output}</pre>")
-    else:
-        await edit_or_reply(message, text="<b>OUTPUT :</b>\n<code>None</code>")
+            try:
+                await app.send_document(
+                    message.chat.id,
+                    "output.txt",
+                    reply_to_message_id=message.id,
+                    caption="<code>Output</code>",
+                )
+                os.remove("output.txt")
+            except Exception as e:
+                await edit_or_reply(message, text=f"<b>Error sending document:</b>\n<pre>{e}</pre>")
+        else:
+            await edit_or_reply(message, text=f"<b>OUTPUT :</b>\n<pre>{output}</pre>")
+    
+    except Exception as err:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        errors = traceback.format_exception(exc_type, exc_obj, exc_tb)
+        await edit_or_reply(message, text=f"<b>ERROR :</b>\n<pre>{''.join(errors)}</pre>")
+    
     await message.stop_propagation()
