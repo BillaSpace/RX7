@@ -96,10 +96,10 @@ async def get_thumb(videoid):
         draw.line((150, 660, 1130, 660), width=6, fill="white")
 
         # Recreation Music text at right side of center thumbnail
-        rec_font = ImageFont.truetype("Opus/assets/font.ttf", 45)
+        rec_font = ImageFont.truetype("Opus/assets/font.ttf", 40)
         rec_text = "Recreation Music"
         rec_text_w, rec_text_h = draw.textsize(rec_text, font=rec_font)
-        rec_x = thumb_pos[0] + center_thumb.width + 50  # 50px gap after thumbnail
+        rec_x = thumb_pos[0] + center_thumb.width + 25  # 50px gap after thumbnail
         rec_y = thumb_pos[1] + (center_thumb.height // 2) - (rec_text_h // 2)
         draw.text((rec_x, rec_y), rec_text, fill="white", font=rec_font)
 
