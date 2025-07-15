@@ -38,6 +38,7 @@ async def init():
 
     try:
         await app.start()
+
         for all_module in ALL_MODULES:
             importlib.import_module("Opus.plugins" + all_module)
         LOGGER("Opus.plugins").info("Successfully Imported Modules...")
@@ -66,10 +67,21 @@ async def init():
         LOGGER("Opus").error(f"Fatal error during startup: {err}")
 
     finally:
-        if app.is_connected:
+        try:
             await app.stop()
-        if userbot.is_connected:
+        except Exception as e:
+            LOGGER("Opus").warning(f"Error while stopping bot: {e}")
+
+        try:
             await userbot.stop()
+        except Exception as e:
+            LOGGER("Opus").warning(f"Error while stopping userbot: {e}")
+
+        try:
+            await Anony.stop()
+        except Exception as e:
+            LOGGER("Opus").warning(f"Error while stopping Pytgcalls instances: {e}")
+
         LOGGER("Opus").info("Stopping Opus Music Bot...")
 
 
