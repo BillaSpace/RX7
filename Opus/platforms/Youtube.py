@@ -36,7 +36,7 @@ async def download_song(link: str, download_mode: str = "audio"):
     async def download_file(url, path):
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(url, timeout=60) as response:
+                async with session.get(url, timeout=25) as response:
                     if response.status != 200:
                         raise Exception(f"File download failed with status {response.status}")
                     with open(path, 'wb') as f:
@@ -50,41 +50,38 @@ async def download_song(link: str, download_mode: str = "audio"):
                 print(f"[File Download Error] {e}")
                 return False
 
-    # Try API 1
-    song_url = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
-    async with aiohttp.ClientSession() as session:
-        for attempt in range(1):
-            try:
-                async with session.get(song_url, timeout=30) as response:
-                    if response.status != 200:
-                        raise Exception(f"API 1 request failed with status {response.status}")
-                    data = await response.json()
-                    if data.get("status") != 200 or data.get("successful") != "success":
-                        raise Exception(f"API 1 error: {data.get('message', 'Unknown error')}")
-                    download_url = data.get("data", {}).get("url")
-                    if not download_url:
-                        raise Exception("API 1 response missing download URL")
-                    if await download_file(download_url, file_path):
-                        return file_path
-            except Exception as e:
-                print(f"[API 1 failed, attempt {attempt + 1}/3] {e}")
-                await asyncio.sleep(1)
-
-    # Try API 2 (audio only)
-    if download_mode == "audio":
+    # Try API 2 first (direct .mp3 or .mp4 link)
+    try:
         song_url2 = f"{API_URL2}?direct&id={video_id}"
         async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(song_url2, timeout=30) as response:
-                    if response.status != 200:
-                        raise Exception(f"API 2 request failed with status {response.status}")
-                    download_url = await response.text()
-                    if not download_url.startswith("http"):
-                        raise Exception("API 2 did not return a valid download URL")
-                    if await download_file(download_url, file_path):
-                        return file_path
-            except Exception as e:
-                print(f"[API 2 failed] {e}")
+            async with session.get(song_url2, timeout=30) as response:
+                if response.status != 200:
+                    raise Exception(f"API 2 request failed with status {response.status}")
+                direct_url = await response.text()
+                if not direct_url.startswith("http"):
+                    raise Exception("API 2 did not return a valid download URL")
+                if await download_file(direct_url.strip(), file_path):
+                    return file_path
+    except Exception as e:
+        print(f"[API 2 failed] {e}")
+
+    # Fallback to API 1
+    try:
+        song_url1 = f"{API_URL1}?url=https://www.youtube.com/watch?v={video_id}&downloadMode={download_mode}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(song_url1, timeout=30) as response:
+                if response.status != 200:
+                    raise Exception(f"API 1 request failed with status {response.status}")
+                data = await response.json()
+                if data.get("status") != 200 or data.get("successful") != "success":
+                    raise Exception(f"API 1 error: {data.get('message', 'Unknown error')}")
+                download_url = data.get("data", {}).get("url")
+                if not download_url:
+                    raise Exception("API 1 response missing download URL")
+                if await download_file(download_url, file_path):
+                    return file_path
+    except Exception as e:
+        print(f"[API 1 as a fallback failed] {e}")
 
     return None
 
