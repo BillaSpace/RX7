@@ -5,7 +5,6 @@ from ..logging import LOGGER
 assistants = []
 assistantids = []
 
-
 class Userbot(Client):
     def __init__(self):
         self.one = Client(
@@ -65,18 +64,17 @@ class Userbot(Client):
                 assistantids.append(me.id)
 
                 try:
-                    await client.send_message(config.LOGGER_ID, "Assistant Started")
-                except:
+                    await client.send_message(config.LOGGER_ID, f"✅ Assistant {index} started as {client.name}")
+                except Exception as log_err:
                     LOGGER(__name__).error(
-                        f"Assistant Account {index} failed to send message to log group. Promote it!"
+                        f"❌ Assistant {index} failed to send message to log group: {log_err}. "
+                        f"Make sure it is added and promoted."
                     )
-                    exit()
 
                 LOGGER(__name__).info(f"Assistant {index} Started as {client.name}")
 
             except Exception as e:
-                LOGGER(__name__).error(f"Failed to start Assistant {index}: {e}")
-                exit()
+                LOGGER(__name__).error(f"❌ Failed to start Assistant {index}: {e}")
 
         if config.STRING1:
             await _start_assistant(1, self.one)
