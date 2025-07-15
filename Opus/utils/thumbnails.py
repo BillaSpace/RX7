@@ -13,102 +13,83 @@ from config import YOUTUBE_IMG_URL
 def changeImageSize(maxWidth, maxHeight, image):
     widthRatio = maxWidth / image.size[0]
     heightRatio = maxHeight / image.size[1]
-    newWidth = int(widthRatio * image.size[0])
-    newHeight = int(heightRatio * image.size[1])
-    newImage = image.resize((newWidth, newHeight))
-    return newImage
+    ratio = min(widthRatio, heightRatio)
+    newWidth = int(image.size[0] * ratio)
+    newHeight = int(image.size[1] * ratio)
+    image = image.resize((newWidth, newHeight), Image.ANTIALIAS)
+    return image
 
 
 async def get_thumb(videoid):
-    if os.path.isfile(f"cache/{videoid}.png"):
-        return f"cache/{videoid}.png"
+    final_path = f"cache/{videoid}.png"
+    if os.path.isfile(final_path):
+        return final_path
 
     url = f"https://www.youtube.com/watch?v={videoid}"
     try:
         results = VideosSearch(url, limit=1)
-        for result in (await results.next())["result"]:
-            try:
-                title = result["title"]
-                title = re.sub("\W+", " ", title)
-                title = title.title()
-            except:
-                title = "Unsupported Title"
-            try:
-                duration = result["duration"]
-            except:
-                duration = "Unknown Mins"
-            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
-            try:
-                views = result["viewCount"]["short"]
-            except:
-                views = "Unknown Views"
-            try:
-                channel = result["channel"]["name"]
-            except:
-                channel = "Unknown Channel"
+        result_data = await results.next()
+        if not result_data["result"]:
+            raise Exception("No results found")
 
+        result = result_data["result"][0]
+        title = re.sub(r"\W+", " ", result.get("title", "Unknown Title")).title()
+        duration = result.get("duration", "Unknown Duration")
+        thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+        views = result.get("viewCount", {}).get("short", "Unknown Views")
+        channel = result.get("channel", {}).get("name", "Unknown Channel")
+
+        # Download thumbnail
         async with aiohttp.ClientSession() as session:
             async with session.get(thumbnail) as resp:
                 if resp.status == 200:
-                    f = await aiofiles.open(f"cache/thumb{videoid}.png", mode="wb")
-                    await f.write(await resp.read())
-                    await f.close()
+                    fpath = f"cache/thumb{videoid}.png"
+                    async with aiofiles.open(fpath, mode="wb") as f:
+                        await f.write(await resp.read())
 
         youtube = Image.open(f"cache/thumb{videoid}.png")
-        image1 = changeImageSize(1280, 720, youtube)
-        sex = changeImageSize(940, 420, youtube)
-        image2 = image1.convert("RGBA")
-        background = image2.filter(filter=ImageFilter.BoxBlur(30))
-        enhancer = ImageEnhance.Brightness(background)
-        background = enhancer.enhance(0.8)
-        logo = ImageOps.expand(sex, border=15, fill="white")
-        background.paste(logo, (150, 80))
+        image1 = changeImageSize(1280, 720, youtube.copy())
+        center_thumb = changeImageSize(940, 420, youtube.copy())
 
+        # Rounded center image mask
+        mask = Image.new("L", center_thumb.size, 0)
+        draw_mask = ImageDraw.Draw(mask)
+        draw_mask.rounded_rectangle(
+            [0, 0, center_thumb.size[0], center_thumb.size[1]],
+            radius=40,
+            fill=255
+        )
+
+        # Background blur
+        image2 = image1.convert("RGBA")
+        background = image2.filter(ImageFilter.BoxBlur(30))
+        background = ImageEnhance.Brightness(background).enhance(0.8)
+
+        # Paste rounded thumbnail on blurred background
+        thumb_pos = (170, 90)
+        center_thumb_rgba = center_thumb.convert("RGBA")
+        background.paste(center_thumb_rgba, thumb_pos, mask)
+
+        # Draw text
         draw = ImageDraw.Draw(background)
         font = ImageFont.truetype("Opus/assets/font2.ttf", 30)
         font2 = ImageFont.truetype("Opus/assets/font2.ttf", 30)
         arial = ImageFont.truetype("Opus/assets/font2.ttf", 30)
-        name_font = ImageFont.truetype("Opus/assets/font.ttf", 30)
-        para = textwrap.wrap(title, width=32)
-        j = 0
-        draw.text(
-            (50, 600),
-            f"{title}",
-            fill="white",
-            stroke_fill="white",
-            font=font,
-        )
 
-        draw.text(
-            (50, 565),
-            f"{channel} | {views[:23]}",
-            (255, 255, 255),
-            font=arial,
-        )
-
-        draw.text(
-            (50, 640),
-            f"00:00",
-            (255, 255, 255),
-            stroke_width=1,
-            stroke_fill="white",
-            font=font2,
-        )
-        draw.text(
-            (1150, 640),
-            f"{duration[:23]}",
-            (255, 255, 255),
-            stroke_width=1,
-            stroke_fill="white",
-            font=font2,
-        )
+        draw.text((50, 565), f"{channel} | {views[:23]}", fill="white", font=arial)
+        draw.text((50, 600), title, fill="white", font=font, stroke_fill="white")
+        draw.text((50, 640), "00:00", fill="white", font=font2, stroke_width=1, stroke_fill="white")
+        draw.text((1150, 640), duration[:23], fill="white", font=font2, stroke_width=1, stroke_fill="white")
         draw.line((150, 660, 1130, 660), width=6, fill="white")
+
         try:
             os.remove(f"cache/thumb{videoid}.png")
         except:
             pass
-        background.save(f"cache/{videoid}.png")
-        return f"cache/{videoid}.png"
+
+        background.save(final_path)
+        return final_path
+
     except Exception as e:
-        print(e)
+        print("Thumbnail generation error:", e)
         return YOUTUBE_IMG_URL
