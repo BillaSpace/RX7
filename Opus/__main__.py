@@ -70,17 +70,12 @@ async def init():
         try:
             await app.stop()
         except Exception as e:
-            LOGGER("Opus").warning(f"Error while stopping bot: {e}")
+            LOGGER("Opus").warning(f"Error while stopping app: {e}")
 
         try:
             await userbot.stop()
         except Exception as e:
             LOGGER("Opus").warning(f"Error while stopping userbot: {e}")
-
-        try:
-            await Anony.stop()
-        except Exception as e:
-            LOGGER("Opus").warning(f"Error while stopping Pytgcalls instances: {e}")
 
         LOGGER("Opus").info("Stopping Opus Music Bot...")
 
