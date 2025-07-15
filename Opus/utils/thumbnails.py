@@ -69,7 +69,7 @@ async def get_thumb(videoid):
 
         # Background blur (softer)
         image2 = image1.convert("RGBA")
-        background = image2.filter(ImageFilter.BoxBlur(16))
+        background = image2.filter(ImageFilter.BoxBlur(15))
         background = ImageEnhance.Brightness(background).enhance(0.8)
 
         # Paste rounded thumbnail
@@ -90,26 +90,18 @@ async def get_thumb(videoid):
         draw.text((50, 600), title, fill="white", font=font, stroke_fill="white")
 
         # Start and End Time
-        draw.text((50, 640), "00:10", fill="white", font=font2, stroke_width=1, stroke_fill="black")
+        draw.text((50, 640), "00:25", fill="white", font=font2, stroke_width=1, stroke_fill="white")
         draw.text((1150, 640), duration[:23], fill="white", font=font2, stroke_width=1, stroke_fill="white")
 
         draw.line((150, 660, 1130, 660), width=6, fill="white")
 
         # Recreation Music text at right side of center thumbnail
+        rec_font = ImageFont.truetype("Opus/assets/font.ttf", 45)
         rec_text = "Recreation Music"
-max_width = 1100 - (thumb_pos[0] + center_thumb.width + 50)  # Right margin boundary
-font_size = 45
-
-while font_size > 10:
-    rec_font = ImageFont.truetype("Opus/assets/font.ttf", font_size)
-    rec_text_w, rec_text_h = draw.textsize(rec_text, font=rec_font)
-    if rec_text_w <= max_width:
-        break
-    font_size -= 1
-
-rec_x = thumb_pos[0] + center_thumb.width + 50
-rec_y = thumb_pos[1] + (center_thumb.height // 2) - (rec_text_h // 2)
-draw.text((rec_x, rec_y), rec_text, fill="white", font=rec_font)
+        rec_text_w, rec_text_h = draw.textsize(rec_text, font=rec_font)
+        rec_x = thumb_pos[0] + center_thumb.width + 50  # 50px gap after thumbnail
+        rec_y = thumb_pos[1] + (center_thumb.height // 2) - (rec_text_h // 2)
+        draw.text((rec_x, rec_y), rec_text, fill="white", font=rec_font)
 
         try:
             os.remove(f"cache/thumb{videoid}.png")
