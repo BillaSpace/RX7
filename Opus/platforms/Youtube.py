@@ -39,12 +39,10 @@ async def download_song(link: str, download_mode: str = "audio"):
                 async with session.get(url, timeout=25) as response:
                     if response.status != 200:
                         raise Exception(f"File download failed with status {response.status}")
+                    # Write the entire binary content at once
+                    content = await response.read()
                     with open(path, 'wb') as f:
-                        while True:
-                            chunk = await response.content.read(8192)
-                            if not chunk:
-                                break
-                            f.write(chunk)
+                        f.write(content)
                     return True
             except Exception as e:
                 print(f"[File Download Error] {e}")
@@ -57,11 +55,11 @@ async def download_song(link: str, download_mode: str = "audio"):
             async with session.get(song_url2, timeout=30) as response:
                 if response.status != 200:
                     raise Exception(f"API 2 request failed with status {response.status}")
-                direct_url = await response.text()
-                if not direct_url.startswith("http"):
-                    raise Exception("API 2 did not return a valid download URL")
-                if await download_file(direct_url.strip(), file_path):
-                    return file_path
+                # Since API_URL2 returns an MP3 file, treat it as binary
+                content = await response.read()
+                with open(file_path, 'wb') as f:
+                    f.write(content)
+                return file_path
     except Exception as e:
         print(f"[API 2 failed] {e}")
 
