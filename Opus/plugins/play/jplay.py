@@ -5,9 +5,10 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from pyrogram import filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from pyrogram.errors import FloodWait, MessageNotModified, MessageIdInvalid
-from config import BANNED_USERS, SONG_DUMP_ID
+from config import BANNED_USERS, SONG_DUMP_ID, OWNER_ID
 from Opus import app
 from Opus.utils import seconds_to_min
+from Opus.misc import SUDOERS
 import aiohttp
 import asyncio
 import logging
@@ -38,10 +39,8 @@ async def ensure_cookies_file():
         logger.info(f"Cookies file already exists: {COOKIES_PATH}")
         return
     
-    # Create cookies/ directory if it doesn't exist
     os.makedirs(os.path.dirname(COOKIES_PATH), exist_ok=True)
     
-    # Attempt to download cookies file
     url = "https://v0-mongo-db-api-setup.vercel.app/api/cookies.txt"
     try:
         async with aiohttp.ClientSession() as session:
@@ -53,14 +52,12 @@ async def ensure_cookies_file():
                     logger.info(f"Successfully downloaded cookies file to {COOKIES_PATH}. Size: {len(content)} bytes")
                 else:
                     logger.error(f"Failed to download cookies from {url}: HTTP {response.status}")
-                    # Fallback to cookies.txt in root folder
                     if os.path.exists(FALLBACK_COOKIES_PATH):
                         logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
                     else:
                         logger.error(f"Fallback cookies file not found: {FALLBACK_COOKIES_PATH}")
     except Exception as e:
         logger.error(f"Error downloading cookies from {url}: {e}")
-        # Fallback to cookies.txt in root folder
         if os.path.exists(FALLBACK_COOKIES_PATH):
             logger.info(f"Falling back to {FALLBACK_COOKIES_PATH}")
         else:
@@ -73,7 +70,6 @@ async def download_thumbnail(url):
             async with session.get(url) as response:
                 if response.status == 200:
                     content = await response.read()
-                    # Create a temporary file for the thumbnail
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
                         temp_file.write(content)
                         temp_file_path = temp_file.name
@@ -87,14 +83,14 @@ async def download_thumbnail(url):
         return None
 
 async def cleanup_downloads():
-    """Clean up files in downloads/ folder older than 60 minutes"""
+    """Clean up files in downloads/ folder older than 2 hours"""
     try:
         current_time = time.time()
         for filename in os.listdir(DOWNLOADS_DIR):
             filepath = os.path.join(DOWNLOADS_DIR, filename)
             if os.path.isfile(filepath):
                 file_age = current_time - os.path.getmtime(filepath)
-                if file_age > 3600:  # 60 minutes
+                if file_age > 7200:  # 2 hours
                     try:
                         os.remove(filepath)
                         logger.info(f"Cleaned up old file: {filepath}")
@@ -103,7 +99,6 @@ async def cleanup_downloads():
     except Exception as e:
         logger.error(f"Error during downloads cleanup: {e}")
 
-# YouTube download options
 ydl_opts = {
     'format': 'bestaudio/best',
     'postprocessors': [{
@@ -136,11 +131,9 @@ async def search_spotify(query, limit=5):
 
 async def download_youtube_audio(query):
     """Download audio from YouTube with cookies"""
-    # Generate expected filename
     sanitized_query = "".join(c for c in query if c.isalnum() or c in (' ', '-', '_')).rstrip()
     expected_filename = f"downloads/{sanitized_query}.mp3"
     
-    # Check if file already exists
     if os.path.exists(expected_filename):
         logger.info(f"File already exists, skipping download: {expected_filename}")
         try:
@@ -167,7 +160,6 @@ async def download_youtube_audio(query):
             filepath = filepath.rsplit('.', 1)[0] + '.mp3'
             if not os.path.exists(filepath):
                 logger.error(f"Downloaded file not found: {filepath}")
-                # Retry without cookies
                 ydl_opts_no_cookies = ydl_opts.copy()
                 ydl_opts_no_cookies.pop('cookiefile', None)
                 with yt_dlp.YoutubeDL(ydl_opts_no_cookies) as ydl:
@@ -193,7 +185,7 @@ async def download_youtube_audio(query):
         return None
 
 async def auto_delete_message(message: Message, delay=300):
-    """Delete a message after a specified delay (default 5 minutes)"""
+    """Delete a message after a specified delay (5 minutes)"""
     try:
         await asyncio.sleep(delay)
         try:
@@ -208,13 +200,14 @@ async def auto_delete_message(message: Message, delay=300):
     except Exception as e:
         logger.error(f"Error in auto-delete task for message {message.id}: {e}")
 
-@app.on_message(filters.command(["spotify"]) & filters.group & ~BANNED_USERS)
+# Modified command filter to include PM and restrict to OWNER_ID/SUDOERS
+@app.on_message(filters.command(["spotify"]) & (filters.group | filters.private) & (filters.user(OWNER_ID) | SUDOERS) & ~BANNED_USERS)
 async def song_search(client, message: Message):
     await ensure_cookies_file()
     
     try:
         if len(message.command) < 2:
-            return await message.reply_text("Please provide a song name to search & Download As Loseless 48hz 16bit High Quality Audio File Directly From Spotify Servers")
+            return await message.reply_text("Please provide a song name to search & Download As Lossless 48hz 16bit High Quality Audio File Directly From Spotify Servers")
         
         query = " ".join(message.command[1:])
         msg = await message.reply_text(f"🔍 Searching for: {query}")
@@ -255,7 +248,7 @@ async def song_search(client, message: Message):
             await asyncio.sleep(e.value)
             await msg.edit_text("Failed to search for songs")
 
-@app.on_callback_query(filters.regex(r"^dl_(.+)$"))
+@app.on_callback_query(filters.regex(r"^dl_(.+)$") & (filters.user(OWNER_ID) | SUDOERS))
 async def download_handler(client, callback_query):
     try:
         await callback_query.answer("Preparing download...")
@@ -266,10 +259,8 @@ async def download_handler(client, callback_query):
         
         msg = await callback_query.message.reply_text(f"⬇️ Downloading: {query}")
         
-        # Ensure downloads directory exists
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
         
-        # Download audio
         audio_info = await download_youtube_audio(query)
         if not audio_info or not os.path.exists(audio_info['filepath']):
             logger.error(f"Audio file missing: {audio_info.get('filepath') if audio_info else 'None'}")
@@ -281,13 +272,11 @@ async def download_handler(client, callback_query):
                 await msg.edit_text("Failed to download song")
             return
         
-        # Download Spotify thumbnail
         thumb_path = None
         if track['album']['images']:
             thumb_path = await download_thumbnail(track['album']['images'][0]['url'])
         
         try:
-            # Send audio to the original chat
             audio_message = await callback_query.message.reply_audio(
                 audio=audio_info['filepath'],
                 title=track['name'],
@@ -297,11 +286,9 @@ async def download_handler(client, callback_query):
                 caption=f"🎵 {track['name']}\n🎤 {', '.join(a['name'] for a in track['artists'])}\nPowered By Space-X Alpha API"
             )
             
-            # Schedule auto-delete for the audio message (except in SONG_DUMP_ID)
             if callback_query.message.chat.id != SONG_DUMP_ID:
                 asyncio.create_task(auto_delete_message(audio_message, delay=300))
             
-            # Send a copy to SONG_DUMP_ID
             if SONG_DUMP_ID:
                 try:
                     await app.send_audio(
@@ -327,7 +314,6 @@ async def download_handler(client, callback_query):
                 await msg.edit_text("Failed to send audio file")
             return
         
-        # Clean up the downloading message
         try:
             await msg.delete()
         except FloodWait as e:
@@ -335,10 +321,8 @@ async def download_handler(client, callback_query):
             await asyncio.sleep(e.value)
             await msg.delete()
         
-        # Schedule cleanup of downloads folder
         asyncio.create_task(cleanup_downloads())
         
-        # Clean up the downloaded file (unless it's in SONG_DUMP_ID context)
         try:
             if os.path.exists(audio_info['filepath']) and callback_query.message.chat.id != SONG_DUMP_ID:
                 os.remove(audio_info['filepath'])
@@ -346,7 +330,6 @@ async def download_handler(client, callback_query):
         except Exception as e:
             logger.error(f"Error cleaning up file {audio_info['filepath']}: {e}")
         
-        # Clean up the thumbnail file
         try:
             if thumb_path and os.path.exists(thumb_path):
                 os.remove(thumb_path)
